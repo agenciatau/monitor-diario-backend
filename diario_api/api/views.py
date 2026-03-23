@@ -1,0 +1,152 @@
+from django.conf import settings
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from openai import OpenAI
+from drf_spectacular.utils import extend_schema
+from rest_framework import serializers
+from .wikidata import enrich_entities
+
+client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+
+class ChatRequestSerializer(serializers.Serializer):
+    pergunta = serializers.CharField(help_text="Pergunta a ser respondida")
+
+
+class WikidataEntrySerializer(serializers.Serializer):
+    qid = serializers.CharField()
+    label = serializers.CharField()
+    description = serializers.CharField()
+    url = serializers.CharField()
+    fatos = serializers.DictField()
+
+
+class ChatResponseSerializer(serializers.Serializer):
+    resposta = serializers.CharField(help_text="Resposta gerada pelo modelo")
+    fontes = serializers.ListField(
+        child=serializers.DictField(), help_text="Arquivos utilizados como fonte"
+    )
+    wikidata = serializers.ListField(
+        child=WikidataEntrySerializer(),
+        help_text="Contexto externo do Wikidata para entidades mencionadas na resposta",
+    )
+
+
+class ChatView(APIView):
+    @extend_schema(request=ChatRequestSerializer, responses=ChatResponseSerializer)
+    def post(self, request):
+        pergunta = request.data.get("pergunta")
+        if not pergunta:
+            return Response(
+                {"erro": "Pergunta não fornecida"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        vector_store_id = settings.VECTOR_STORE_ID
+        if not vector_store_id:
+            return Response(
+                {"erro": "VECTOR_STORE_ID não configurado. Execute upload_pdfs.py primeiro."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        try:
+            response = client.responses.create(
+                model="gpt-4o-mini",
+                input=pergunta,
+                tools=[{
+                    "type": "file_search",
+                    "vector_store_ids": [vector_store_id],
+                }],
+            )
+        except Exception as e:
+            return Response(
+                {"erro": f"Erro ao consultar a API: {str(e)}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # Extrai texto da resposta
+        resposta_texto = ""
+        fontes = []
+        seen_files = set()
+        for item in response.output:
+            if item.type == "message":
+                for content in item.content:
+                    if content.type == "output_text":
+                        resposta_texto = content.text
+                        for annotation in getattr(content, "annotations", []):
+                            if annotation.type == "file_citation":
+                                filename = annotation.filename
+                                if filename not in seen_files:
+                                    seen_files.add(filename)
+                                    fontes.append({"arquivo": filename})
+
+        # Enriquecimento com Wikidata: extrai entidades da resposta e busca fatos externos
+        wikidata_dados = []
+        if resposta_texto:
+            wikidata_dados = _enrich_response_with_wikidata(resposta_texto)
+
+        return Response({"resposta": resposta_texto, "fontes": fontes, "wikidata": wikidata_dados})
+
+
+def _enrich_response_with_wikidata(resposta_texto: str) -> list:
+    """
+    Uses GPT to extract named entities (people, companies, orgs) from the
+    response text, then queries Wikidata for structured facts about each.
+    Returns an empty list silently on any failure so the main response is unaffected.
+    """
+    try:
+        extraction = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Liste apenas os nomes de pessoas, empresas e organizações "
+                    "mencionadas neste texto. Máximo 5 itens, separados por vírgula, "
+                    "sem explicações adicionais. Se não houver nenhum, responda com uma string vazia.\n\n"
+                    f"{resposta_texto[:1500]}"
+                ),
+            }],
+            max_tokens=80,
+            temperature=0,
+        )
+        raw = extraction.choices[0].message.content.strip()
+        if not raw:
+            return []
+        entity_names = [e.strip() for e in raw.split(",") if e.strip()]
+        return enrich_entities(entity_names)
+    except Exception:
+        return []
+
+
+class UploadView(APIView):
+    """Endpoint para adicionar novos PDFs via API (opcional)."""
+
+    def post(self, request):
+        arquivo = request.FILES.get("arquivo")
+        if not arquivo:
+            return Response({"erro": "Nenhum arquivo enviado"}, status=status.HTTP_400_BAD_REQUEST)
+
+        vector_store_id = settings.VECTOR_STORE_ID
+        if not vector_store_id:
+            return Response(
+                {"erro": "VECTOR_STORE_ID não configurado"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        try:
+            uploaded = client.files.create(file=arquivo, purpose="assistants")
+            batch = client.vector_stores.file_batches.create_and_poll(
+                vector_store_id=vector_store_id,
+                file_ids=[uploaded.id],
+            )
+            return Response({
+                "mensagem": "Arquivo indexado com sucesso",
+                "file_id": uploaded.id,
+                "status": batch.status,
+            })
+        except Exception as e:
+            return Response(
+                {"erro": f"Erro ao indexar arquivo: {str(e)}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
