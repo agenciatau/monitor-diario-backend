@@ -67,3 +67,6 @@ SPECTACULAR_SETTINGS = {
 
 OPENAI_API_KEY = os.environ.get("OPEN_API_KEY")
 VECTOR_STORE_ID = os.environ.get("VECTOR_STORE_ID")
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
