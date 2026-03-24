@@ -3,15 +3,21 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from openai import OpenAI
+from supabase import create_client
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
 from .wikidata import enrich_entities
 
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
+supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
 
 class ChatRequestSerializer(serializers.Serializer):
     pergunta = serializers.CharField(help_text="Pergunta a ser respondida")
+    estado = serializers.CharField(
+        required=False, allow_blank=True,
+        help_text="Sigla ou nome do estado (ex: 'bahia'). Usado para personalizar o contexto.",
+    )
 
 
 class WikidataEntrySerializer(serializers.Serializer):
@@ -33,6 +39,44 @@ class ChatResponseSerializer(serializers.Serializer):
     )
 
 
+def _search_monitor_config(estado: str) -> dict | None:
+    """Busca configuração de monitoramento do estado na tabela monitor_configs do Supabase."""
+    if not estado:
+        return None
+    try:
+        result = (
+            supabase.table("monitor_configs")
+            .select("estado, descricao, palavras_chave")
+            .eq("estado", estado.lower().strip())
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except Exception:
+        return None
+
+
+def _build_instructions(monitor_config: dict | None) -> str:
+    base = (
+        "Você é um assistente especializado em análise de diários oficiais do Nordeste brasileiro. "
+        "Responda com base nos documentos fornecidos, citando as fontes relevantes. "
+        "Use linguagem clara e objetiva, adequada para jornalistas investigativos."
+    )
+    if not monitor_config:
+        return base
+
+    partes = [base]
+    if monitor_config.get("descricao"):
+        partes.append(f"Contexto do monitoramento: {monitor_config['descricao']}")
+    if monitor_config.get("palavras_chave"):
+        keywords = monitor_config["palavras_chave"]
+        if isinstance(keywords, list):
+            keywords = ", ".join(keywords)
+        partes.append(f"Foque especialmente em temas relacionados a: {keywords}.")
+
+    return " ".join(partes)
+
+
 class ChatView(APIView):
     @extend_schema(request=ChatRequestSerializer, responses=ChatResponseSerializer)
     def post(self, request):
@@ -50,9 +94,14 @@ class ChatView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
+        estado = request.data.get("estado", "")
+        monitor_config = _search_monitor_config(estado)
+        instrucoes = _build_instructions(monitor_config)
+
         try:
             response = client.responses.create(
                 model="gpt-4o-mini",
+                instructions=instrucoes,
                 input=pergunta,
                 tools=[{
                     "type": "file_search",
