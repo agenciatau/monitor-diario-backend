@@ -8,6 +8,16 @@ import random
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from dotenv import load_dotenv
+from supabase import create_client
+
+load_dotenv()
+
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+STORAGE_BUCKET = "diarios-oficiais"
 
 # Strategies:
 #   'scrape'       – parses HTML listing page for <a href="*.pdf"> links
@@ -16,27 +26,11 @@ from pathlib import Path
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (compatible; DiarioBot/1.0)'}
 
+# Northeast Brazil states only
 sites = {
-    'acre': {
-        'strategy': 'scrape',
-        'url_lista': 'https://diario.ac.gov.br/',
-        'selector': 'a[href$=".pdf"]',
-    },
     'alagoas': {
         'strategy': 'scrape',
         'url_lista': 'https://diario.imprensaoficial.al.gov.br/',
-        'selector': 'a[href$=".pdf"]',
-    },
-    'amapa': {
-        'strategy': 'id_range',
-        # DIOFE-AP – IDs incrementais; ~9860 era 2024
-        'url_pattern': 'https://diofe.portal.ap.gov.br/portal/edicoes/download/{id}',
-        'id_start': 10100,
-        'id_count': 30,
-    },
-    'amazonas': {
-        'strategy': 'scrape',
-        'url_lista': 'https://diario.imprensaoficial.am.gov.br/',
         'selector': 'a[href$=".pdf"]',
     },
     'bahia': {
@@ -51,62 +45,15 @@ sites = {
         'url_lista': 'https://www.casacivil.ce.gov.br/diario-oficial/',
         'selector': 'a[href$=".pdf"]',
     },
-    'distrito_federal': {
-        'strategy': 'scrape',
-        'url_lista': 'https://dodf.df.gov.br/',
-        'selector': 'a[href$=".pdf"]',
-    },
-    'espirito_santo': {
-        'strategy': 'id_range',
-        # IOES – IDs incrementais
-        'url_pattern': 'https://ioes.dio.es.gov.br/portal/edicoes/download/{id}',
-        'id_start': 8100,
-        'id_count': 30,
-    },
-    'goias': {
-        'strategy': 'id_range',
-        # DOE-GO – IDs incrementais; ~6462 era 2024
-        'url_pattern': 'https://diariooficial.abc.go.gov.br/portal/edicoes/download/{id}',
-        'id_start': 6800,
-        'id_count': 30,
-    },
     'maranhao': {
         'strategy': 'date_pattern',
         # PDF direto por data
         'url_pattern': 'https://www.diariooficial.ma.gov.br/download.php?arqv=1&arq={date}',
         'days_back': 15,
     },
-    'mato_grosso': {
-        'strategy': 'id_range',
-        # IOMAT – IDs incrementais; ~18226 era 2025
-        'url_pattern': 'https://www.iomat.mt.gov.br/portal/edicoes/download/{id}',
-        'id_start': 18500,
-        'id_count': 30,
-    },
-    'mato_grosso_do_sul': {
-        'strategy': 'scrape',
-        'url_lista': 'https://www.spdo.ms.gov.br/diariodoe',
-        'selector': 'a[href$=".pdf"]',
-    },
-    'minas_gerais': {
-        'strategy': 'scrape',
-        'url_lista': 'https://www.jornalminasgerais.mg.gov.br/',
-        'selector': 'a[href$=".pdf"]',
-    },
-    'para': {
-        'strategy': 'date_pattern',
-        # PDF por data: ioepa.com.br/pages/YYYY/YYYY.MM.DD.DOE.pdf
-        'url_pattern': 'https://ioepa.com.br/pages/{year}/{year}.{month}.{day}.DOE.pdf',
-        'days_back': 15,
-    },
     'paraiba': {
         'strategy': 'scrape',
         'url_lista': 'https://auniao.pb.gov.br/doe',
-        'selector': 'a[href$=".pdf"]',
-    },
-    'parana': {
-        'strategy': 'scrape',
-        'url_lista': 'https://www.imprensaoficial.pr.gov.br/',
         'selector': 'a[href$=".pdf"]',
     },
     'pernambuco': {
@@ -120,49 +67,14 @@ sites = {
         'url_lista': 'https://www.diario.pi.gov.br/doe/busca',
         'selector': 'a[href$=".pdf"]',
     },
-    'rio_de_janeiro': {
-        'strategy': 'scrape',
-        'url_lista': 'https://portal.ioerj.com.br/diario-oficial/',
-        'selector': 'a[href$=".pdf"]',
-    },
     'rio_grande_do_norte': {
         'strategy': 'scrape',
         'url_lista': 'http://www.diariooficial.rn.gov.br/',
         'selector': 'a[href$=".pdf"]',
     },
-    'rio_grande_do_sul': {
-        'strategy': 'scrape',
-        'url_lista': 'https://www.diariooficial.rs.gov.br/',
-        'selector': 'a[href$=".pdf"]',
-    },
-    'rondonia': {
-        'strategy': 'scrape',
-        'url_lista': 'https://diof.ro.gov.br/',
-        'selector': 'a[href$=".pdf"]',
-    },
-    'roraima': {
-        'strategy': 'scrape',
-        'url_lista': 'https://www.imprensaoficial.rr.gov.br/',
-        'selector': 'a[href$=".pdf"]',
-    },
-    'santa_catarina': {
-        'strategy': 'scrape',
-        'url_lista': 'https://doe.sea.sc.gov.br/',
-        'selector': 'a[href$=".pdf"]',
-    },
-    'sao_paulo': {
-        'strategy': 'scrape',
-        'url_lista': 'https://doe.sp.gov.br/',
-        'selector': 'a[href$=".pdf"]',
-    },
     'sergipe': {
         'strategy': 'scrape',
         'url_lista': 'https://iose.se.gov.br/diario-oficial',
-        'selector': 'a[href$=".pdf"]',
-    },
-    'tocantins': {
-        'strategy': 'scrape',
-        'url_lista': 'https://diariooficial.to.gov.br/',
         'selector': 'a[href$=".pdf"]',
     },
 }
@@ -411,11 +323,37 @@ def renomear_pdfs_existentes(download_dir):
 
 
 # ──────────────────────────────────────────────
+# Supabase upload
+# ──────────────────────────────────────────────
+
+def salvar_no_supabase(caminho_local, estado, data_publicacao, nome_arquivo):
+    """Faz upload do PDF no Supabase Storage e insere registro na tabela diarios."""
+    storage_path = f"{estado}/{nome_arquivo}"
+    try:
+        with open(caminho_local, 'rb') as f:
+            supabase.storage.from_(STORAGE_BUCKET).upload(
+                path=storage_path,
+                file=f,
+                file_options={"content-type": "application/pdf", "upsert": "true"},
+            )
+        public_url = supabase.storage.from_(STORAGE_BUCKET).get_public_url(storage_path)
+        supabase.table("diarios").insert({
+            "estado": estado,
+            "data_publicacao": f"{data_publicacao[:4]}-{data_publicacao[4:6]}-{data_publicacao[6:]}",
+            "arquivo_nome": nome_arquivo,
+            "storage_url": public_url,
+        }).execute()
+        print(f"  ↑ Supabase: {storage_path}")
+    except Exception as e:
+        print(f"  Erro ao salvar no Supabase ({nome_arquivo}): {e}")
+
+
+# ──────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────
 
 def main():
-    alvo = 54          # ~2 PDFs por estado × 27 estados
+    alvo = 18          # ~2 PDFs por estado × 9 estados NE
     max_por_estado = 3
     download_dir = 'diarios_oficiais'
     os.makedirs(download_dir, exist_ok=True)
@@ -485,6 +423,8 @@ def main():
             caminho_final = os.path.join(download_dir, nome_arquivo)
             os.rename(temp, caminho_final)
             nomes_usados.add(nome_arquivo)
+
+            salvar_no_supabase(caminho_final, estado, data, nome_arquivo)
 
             pdfs_baixados += 1
             pdfs_deste_estado += 1
