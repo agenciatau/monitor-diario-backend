@@ -6,6 +6,9 @@
 # Supabase
 supabase/.temp/
 
+# Deprecated files ex.: documentation
+deprecated
+
 # macOS
 .DS_Store
 
