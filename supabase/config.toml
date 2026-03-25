@@ -1,0 +1,11 @@
+[api]
+enabled = true
+
+[functions.chat]
+verify_jwt = false
+
+[functions.upload]
+verify_jwt = false
+
+[functions.analyze]
+verify_jwt = false
