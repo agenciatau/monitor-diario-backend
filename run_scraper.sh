@@ -18,3 +18,7 @@ source .venv/bin/activate 2>/dev/null || true
 python pdfs_scraper.py
 
 echo "=== $(date '+%Y-%m-%d %H:%M:%S') Scraper finished ==="
+
+echo "=== $(date '+%Y-%m-%d %H:%M:%S') Syncing PDFs to Vector Store ==="
+python upload_pdfs.py
+echo "=== $(date '+%Y-%m-%d %H:%M:%S') Vector Store sync finished ==="
