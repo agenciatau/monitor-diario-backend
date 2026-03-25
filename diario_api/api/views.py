@@ -176,6 +176,108 @@ def _enrich_response_with_wikidata(resposta_texto: str) -> list:
         return []
 
 
+ESTADO_NOMES = {
+    "AL": "Alagoas", "BA": "Bahia", "CE": "Ceará", "MA": "Maranhão",
+    "PB": "Paraíba", "PE": "Pernambuco", "PI": "Piauí", "RN": "Rio Grande do Norte",
+    "SE": "Sergipe",
+}
+
+
+class AnalyzeView(APIView):
+    """
+    Recebe o payload de webhook do Supabase (INSERT em monitores)
+    e gera uma análise automática usando o Vector Store.
+    Armazena o resultado na tabela `analises` do monitor_supabase.
+    """
+
+    def post(self, request):
+        record = request.data.get("record")
+        if not record:
+            return Response({"erro": "Payload inválido: campo 'record' ausente"}, status=status.HTTP_400_BAD_REQUEST)
+
+        uf = record.get("uf", "").upper().strip()
+        if not uf:
+            return Response({"erro": "Campo 'uf' ausente no record"}, status=status.HTTP_400_BAD_REQUEST)
+
+        vector_store_id = settings.VECTOR_STORE_ID
+        if not vector_store_id:
+            return Response(
+                {"erro": "VECTOR_STORE_ID não configurado"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        monitor_config = {
+            "descricao": record.get("description"),
+            "palavras_chave": record.get("keywords"),
+        }
+        instrucoes = _build_instructions(monitor_config)
+
+        estado_nome = ESTADO_NOMES.get(uf, uf)
+        keywords = monitor_config.get("palavras_chave") or []
+        if isinstance(keywords, list):
+            keywords_str = ", ".join(keywords)
+        else:
+            keywords_str = keywords
+
+        pergunta = (
+            f"Com base nos diários oficiais mais recentes de {estado_nome}, "
+            f"faça uma análise completa identificando informações relevantes"
+            + (f" sobre: {keywords_str}." if keywords_str else ".")
+        )
+
+        try:
+            response = client.responses.create(
+                model="gpt-4o-mini",
+                instructions=instrucoes,
+                input=pergunta,
+                tools=[{
+                    "type": "file_search",
+                    "vector_store_ids": [vector_store_id],
+                }],
+            )
+        except Exception as e:
+            return Response(
+                {"erro": f"Erro ao consultar a API: {str(e)}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        resposta_texto = ""
+        fontes = []
+        seen_files = set()
+        for item in response.output:
+            if item.type == "message":
+                for content in item.content:
+                    if content.type == "output_text":
+                        resposta_texto = content.text
+                        for annotation in getattr(content, "annotations", []):
+                            if annotation.type == "file_citation":
+                                filename = annotation.filename
+                                if filename not in seen_files:
+                                    seen_files.add(filename)
+                                    fontes.append({"arquivo": filename})
+
+        wikidata_dados = []
+        if resposta_texto:
+            wikidata_dados = _enrich_response_with_wikidata(resposta_texto)
+
+        monitor_id = record.get("id")
+        try:
+            monitor_supabase.table("analises").insert({
+                "monitor_id": monitor_id,
+                "uf": uf,
+                "resposta": resposta_texto,
+                "fontes": fontes,
+                "wikidata": wikidata_dados,
+            }).execute()
+        except Exception as e:
+            return Response(
+                {"erro": f"Erro ao salvar análise: {str(e)}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response({"resposta": resposta_texto, "fontes": fontes, "wikidata": wikidata_dados})
+
+
 class UploadView(APIView):
     """Endpoint para adicionar novos PDFs via API (opcional)."""
 
