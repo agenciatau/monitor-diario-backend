@@ -7,15 +7,17 @@ Ferramenta de investigação de diários oficiais estaduais do Nordeste brasilei
 1. **Coleta:** O scraper baixa PDFs dos diários oficiais dos estados do Nordeste diariamente (via cron)
 2. **Armazenamento:** Os PDFs são salvos no Supabase Storage e os metadados na tabela `diarios`
 3. **Indexação:** Os PDFs são enviados ao Vector Store da OpenAI para busca semântica
-4. **Consulta:** A API Django responde perguntas em linguagem natural, usando o contexto de monitoramento configurado pelo frontend para personalizar as respostas por estado
+4. **Análise automática:** Quando um novo monitoramento é criado no frontend, um webhook dispara a função `analyze`, que gera uma análise automática e salva o resultado na tabela `analises`
+5. **Consulta:** A API responde perguntas em linguagem natural, usando o contexto de monitoramento configurado pelo frontend para personalizar as respostas por estado
 
 ## Pré-requisitos
 
-- Python 3.10+
+- Python 3.10+ (scraper)
 - Chave de API da OpenAI (com acesso à Responses API)
-- Projeto no Supabase com as tabelas e bucket configurados
+- Conta no Supabase (dois projetos: scraper e monitor/frontend)
+- Supabase CLI (para deploy das Edge Functions)
 
-## Instalação
+## Instalação (scraper)
 
 ```bash
 git clone <url-do-repositorio>
@@ -34,18 +36,17 @@ Crie um arquivo `.env` na raiz do projeto:
 ```env
 OPEN_API_KEY=sua_chave_openai_aqui
 VECTOR_STORE_ID=        # preenchido automaticamente pelo upload_pdfs.py
-SUPABASE_URL=https://<seu-projeto>.supabase.co
+SUPABASE_URL=https://<projeto-scraper>.supabase.co
 SUPABASE_KEY=sua_service_role_key_aqui
-DJANGO_SECRET_KEY=sua_secret_key_django
+MONITOR_SUPABASE_URL=https://<projeto-monitor>.supabase.co
+MONITOR_SUPABASE_KEY=sua_service_role_key_aqui
 ```
 
-### Supabase
-
-Crie os seguintes recursos no seu projeto Supabase:
+### Supabase — Projeto Scraper
 
 **Storage bucket:** `diarios-oficiais` (público)
 
-**Tabela `diarios`** (criada pelo scraper):
+**Tabela `diarios`:**
 ```sql
 create table diarios (
   id uuid primary key default gen_random_uuid(),
@@ -57,72 +58,102 @@ create table diarios (
 );
 ```
 
+### Supabase — Projeto Monitor (frontend)
+
 **Tabela `monitores`** (gerenciada pelo frontend):
-```sql 
+```sql
 create table monitores (
   id uuid primary key default gen_random_uuid(),
-  estado text not null unique,
-  descricao text,
-  palavras_chave text[]
+  uf text not null,
+  description text,
+  keywords text[],
+  is_active boolean default true
+);
+```
+
+**Tabela `analises`** (preenchida automaticamente pela função `analyze`):
+```sql
+create table analises (
+  id uuid default gen_random_uuid() primary key,
+  monitor_id uuid references monitores(id) on delete set null,
+  uf text not null,
+  resposta text,
+  fontes jsonb default '[]'::jsonb,
+  wikidata jsonb default '[]'::jsonb,
+  criado_em timestamptz default now()
 );
 ```
 
 ## Uso
 
-### 1. Baixar PDFs dos diários oficiais
+### 1. Baixar PDFs e indexar no Vector Store
 
 ```bash
 python3 pdfs_scraper.py
+python3 upload_pdfs.py
 ```
 
-Coleta PDFs dos 9 estados do Nordeste (AL, BA, CE, MA, PB, PE, PI, RN, SE), valida a camada de texto, faz upload ao Supabase Storage e registra os metadados na tabela `diarios`.
+O scraper coleta PDFs dos 9 estados do Nordeste (AL, BA, CE, MA, PB, PE, PI, RN, SE), valida a camada de texto, faz upload ao Supabase Storage e registra os metadados na tabela `diarios`. O `upload_pdfs.py` sincroniza os novos PDFs com o Vector Store da OpenAI.
 
 ### 2. Agendar coleta diária (GitHub Actions)
 
-O workflow `.github/workflows/daily_scraper.yml` executa o scraper automaticamente de segunda a sexta às 06h BRT.
+O workflow `.github/workflows/daily_scraper.yml` executa o scraper e a sincronização com o Vector Store automaticamente de segunda a sexta às 06h BRT.
 
 Adicione as seguintes variáveis como **Actions Secrets** no repositório (`Settings → Secrets and variables → Actions`):
 
 | Secret | Valor |
 |--------|-------|
-| `SUPABASE_URL` | URL do seu projeto Supabase |
-| `SUPABASE_KEY` | Service role key do Supabase |
+| `SUPABASE_URL` | URL do projeto scraper |
+| `SUPABASE_KEY` | Service role key do projeto scraper |
+| `OPEN_API_KEY` | Chave da OpenAI |
+| `VECTOR_STORE_ID` | ID do Vector Store da OpenAI |
 
-Para acionar manualmente: `Actions → Daily Scraper → Run workflow`.
+### 3. Deploy das Edge Functions
 
-> **Alternativa local:** use `run_scraper.sh` com crontab se preferir rodar em um servidor próprio.
-
-### 3. Indexar PDFs no Vector Store da OpenAI
+As Edge Functions substituem a API Django e rodam diretamente no Supabase (sem servidor externo).
 
 ```bash
-python3 upload_pdfs.py
+# Instalar Supabase CLI
+brew install supabase/tap/supabase
+
+# Linkar ao projeto monitor
+supabase link --project-ref SEU_PROJECT_REF
+
+# Configurar segredos (lê do .env)
+supabase secrets set --env-file .env
+
+# Fazer deploy
+supabase functions deploy chat
+supabase functions deploy upload
+supabase functions deploy analyze
 ```
 
-Cria (ou reutiliza) um Vector Store na OpenAI, envia os PDFs locais e salva o `VECTOR_STORE_ID` no `.env`.
+O `PROJECT_REF` está em **Supabase dashboard → Project Settings → General → Reference ID**.
 
-### 4. Iniciar o servidor da API
+### 4. Configurar webhook de análise automática
+
+No dashboard do projeto monitor:
+
+- **Database → Webhooks → Create webhook**
+- Table: `monitores` / Event: `INSERT`
+- Target: **Supabase Edge Function → analyze**
+
+A partir daí, toda vez que um novo monitoramento for criado no frontend, a análise é gerada automaticamente e salva em `analises`.
+
+## Edge Functions
+
+| Função | Trigger | Descrição |
+|--------|---------|-----------|
+| `chat` | `POST /functions/v1/chat` | Responde perguntas em linguagem natural com fontes e dados do Wikidata |
+| `upload` | `POST /functions/v1/upload` | Faz upload de um PDF ao Vector Store |
+| `analyze` | DB webhook (`monitores` INSERT) | Gera análise automática ao criar um novo monitoramento |
+
+### Exemplo — chat
 
 ```bash
-python3 diario_api/manage.py migrate  # primeira vez
-python3 diario_api/manage.py runserver
-```
-
-O servidor estará disponível em `http://localhost:8000`.
-
-## Endpoints da API
-
-| Endpoint | Método | Descrição |
-|----------|--------|-----------|
-| `/api/chat/` | POST | Envia uma pergunta e recebe resposta com fontes |
-| `/api/upload/` | POST | Faz upload de um novo PDF ao Vector Store |
-| `/api/docs/` | GET | Documentação Swagger da API |
-
-### Exemplo de consulta
-
-```bash
-curl -X POST http://localhost:8000/api/chat/ \
+curl -X POST https://SEU_PROJECT_REF.supabase.co/functions/v1/chat \
   -H "Content-Type: application/json" \
-  -d '{"pergunta": "Quais licitações de merenda foram publicadas?", "estado": "bahia"}'
+  -d '{"pergunta": "Quais licitações de merenda foram publicadas?", "estado": "BA"}'
 ```
 
 Resposta:
@@ -136,4 +167,4 @@ Resposta:
 }
 ```
 
-O campo `estado` é opcional. Quando informado, a API busca a configuração de monitoramento correspondente na tabela `monitores` e usa a descrição e palavras-chave para personalizar o prompt enviado ao modelo.
+O campo `estado` é opcional. Quando informado, a função busca a configuração de monitoramento correspondente em `monitores` e usa a descrição e palavras-chave para personalizar o prompt.
