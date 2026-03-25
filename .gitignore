@@ -9,6 +9,9 @@ supabase/.temp/
 # Deprecated files ex.: documentation
 deprecated
 
+# Claude Code
+memory
+
 # macOS
 .DS_Store
 
