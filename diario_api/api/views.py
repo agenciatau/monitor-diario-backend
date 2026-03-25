@@ -10,6 +10,7 @@ from .wikidata import enrich_entities
 
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+monitor_supabase = create_client(settings.MONITOR_SUPABASE_URL, settings.MONITOR_SUPABASE_KEY)
 
 
 class ChatRequestSerializer(serializers.Serializer):
@@ -40,18 +41,25 @@ class ChatResponseSerializer(serializers.Serializer):
 
 
 def _search_monitor_config(estado: str) -> dict | None:
-    """Busca configuração de monitoramento do estado na tabela monitor_configs do Supabase."""
+    """Busca configuração de monitoramento do estado na tabela monitores do Supabase."""
     if not estado:
         return None
     try:
         result = (
-            supabase.table("monitor_configs")
-            .select("estado, descricao, palavras_chave")
-            .eq("estado", estado.lower().strip())
+            monitor_supabase.table("monitores")
+            .select("uf, description, keywords")
+            .eq("uf", estado.upper().strip())
+            .eq("is_active", True)
             .limit(1)
             .execute()
         )
-        return result.data[0] if result.data else None
+        if not result.data:
+            return None
+        row = result.data[0]
+        return {
+            "descricao": row.get("description"),
+            "palavras_chave": row.get("keywords"),
+        }
     except Exception:
         return None
 
