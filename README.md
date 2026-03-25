@@ -57,9 +57,9 @@ create table diarios (
 );
 ```
 
-**Tabela `monitor_configs`** (gerenciada pelo frontend):
-```sql
-create table monitor_configs (
+**Tabela `monitores`** (gerenciada pelo frontend):
+```sql 
+create table monitores (
   id uuid primary key default gen_random_uuid(),
   estado text not null unique,
   descricao text,
@@ -77,17 +77,20 @@ python3 pdfs_scraper.py
 
 Coleta PDFs dos 9 estados do Nordeste (AL, BA, CE, MA, PB, PE, PI, RN, SE), valida a camada de texto, faz upload ao Supabase Storage e registra os metadados na tabela `diarios`.
 
-### 2. Agendar coleta diária (cron)
+### 2. Agendar coleta diária (GitHub Actions)
 
-```bash
-chmod +x run_scraper.sh
-crontab -e
-```
+O workflow `.github/workflows/daily_scraper.yml` executa o scraper automaticamente de segunda a sexta às 06h BRT.
 
-Adicione a linha:
-```
-0 6 * * 1-5 /caminho/para/tatu/run_scraper.sh >> /caminho/para/tatu/logs/scraper.log 2>&1
-```
+Adicione as seguintes variáveis como **Actions Secrets** no repositório (`Settings → Secrets and variables → Actions`):
+
+| Secret | Valor |
+|--------|-------|
+| `SUPABASE_URL` | URL do seu projeto Supabase |
+| `SUPABASE_KEY` | Service role key do Supabase |
+
+Para acionar manualmente: `Actions → Daily Scraper → Run workflow`.
+
+> **Alternativa local:** use `run_scraper.sh` com crontab se preferir rodar em um servidor próprio.
 
 ### 3. Indexar PDFs no Vector Store da OpenAI
 
@@ -133,4 +136,4 @@ Resposta:
 }
 ```
 
-O campo `estado` é opcional. Quando informado, a API busca a configuração de monitoramento correspondente na tabela `monitor_configs` e usa a descrição e palavras-chave para personalizar o prompt enviado ao modelo.
+O campo `estado` é opcional. Quando informado, a API busca a configuração de monitoramento correspondente na tabela `monitores` e usa a descrição e palavras-chave para personalizar o prompt enviado ao modelo.
