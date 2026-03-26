@@ -12,6 +12,9 @@ deprecated
 # Claude Code
 memory
 
+# VSCode
+.vscode
+
 # macOS
 .DS_Store
 
