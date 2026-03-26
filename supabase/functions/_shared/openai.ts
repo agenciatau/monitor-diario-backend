@@ -1,4 +1,4 @@
-import OpenAI from "npm:openai";
+import OpenAI from "npm:openai@4";
 import { enrichEntities } from "./wikidata.ts";
 
 export const openai = new OpenAI({ apiKey: Deno.env.get("OPEN_API_KEY")! });

@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildInstructions } from "../_shared/instructions.ts";
 import { queryVectorStore } from "../_shared/openai.ts";
 
