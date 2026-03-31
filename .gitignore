@@ -18,7 +18,10 @@ memory
 # macOS
 .DS_Store
 
-# Python
+# Python (legacy)
 __pycache__/
 *.py[cod]
 .venv/
+
+# Deno
+.deno/
