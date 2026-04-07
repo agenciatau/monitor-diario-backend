@@ -12,6 +12,9 @@ deprecated
 # Claude Code
 memory
 
+# Diarios oficiais PDFs
+diarios-oficiais/
+
 # VSCode
 .vscode
 
