@@ -12,13 +12,19 @@ deprecated
 # Claude Code
 memory
 
+# Diarios oficiais PDFs
+diarios-oficiais/
+
 # VSCode
 .vscode
 
 # macOS
 .DS_Store
 
-# Python
+# Python (legacy)
 __pycache__/
 *.py[cod]
 .venv/
+
+# Deno
+.deno/
