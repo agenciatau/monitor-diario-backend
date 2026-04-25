@@ -1,8 +1,8 @@
-name: Daily Scraper
+name: Hourly Scraper
 
 on:
   schedule:
-    - cron: '0 9 * * 1-5'  # 09:00 UTC = 06:00 BRT, weekdays
+    - cron: '0 * * * 1-5'  # every hour, weekdays
   workflow_dispatch:         # allows manual trigger from GitHub UI
 
 jobs:

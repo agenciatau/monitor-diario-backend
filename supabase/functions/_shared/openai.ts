@@ -14,7 +14,9 @@ function normalizeEstado(nome: string): string {
   return nome.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "_");
 }
 
-export async function getMostRecentFileId(estadoNome: string): Promise<string | null> {
+export async function getMostRecentFileId(
+  estadoNome: string,
+): Promise<{ id: string; date: string } | null> {
   const vectorStoreId = Deno.env.get("VECTOR_STORE_ID")!;
 
   const vsFiles = await openai.beta.vectorStores.files.list(vectorStoreId, { limit: 100 });
@@ -32,7 +34,7 @@ export async function getMostRecentFileId(estadoNome: string): Promise<string | 
     })
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  return matched.length > 0 ? matched[0].id : null;
+  return matched.length > 0 ? matched[0] : null;
 }
 
 export async function searchVectorStore(

@@ -43,29 +43,37 @@ Deno.serve(async (req) => {
   const instructions = buildInstructions(config);
 
   const estadoNome = ESTADO_NOMES[uf] ?? uf;
-  const keywords = Array.isArray(config.palavras_chave)
-    ? config.palavras_chave.join(", ")
-    : (config.palavras_chave ?? "");
-  const pergunta =
-    `Com base nos diários oficiais mais recentes de ${estadoNome}, ` +
-    `faça uma análise completa identificando informações relevantes` +
-    (keywords ? ` sobre: ${keywords}.` : ".");
 
   try {
-    const fileId = await getMostRecentFileId(estadoNome) ?? undefined;
+    const recentFile = await getMostRecentFileId(estadoNome);
+    const fileId = recentFile?.id;
+
+    const dataFormatada = recentFile?.date
+      ? `${recentFile.date.slice(6, 8)}/${recentFile.date.slice(4, 6)}/${recentFile.date.slice(0, 4)}`
+      : "data desconhecida";
+
+    const pergunta =
+      `Analise o PDF do Diário Oficial de ${estadoNome} (${uf}), do dia ${dataFormatada}, ` +
+      `e identifique SOMENTE informações realmente relevantes relacionadas ao tema e palavras-chave definidos nas instruções.`;
+
     const { resposta, fontes, model } = await searchVectorStore(pergunta, instructions, fileId);
+
+    if (fontes.length === 0) {
+      return new Response(
+        JSON.stringify({ ignorado: "Nenhuma fonte encontrada no diário mais recente; análise não salva." }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
 
     const resumo = await generateResumo(resposta);
 
     let url_diario: string | null = null;
-    if (fontes.length > 0) {
-      const { data } = await scraperSupabase
-        .from("diarios")
-        .select("storage_url")
-        .eq("arquivo_nome", fontes[0].arquivo)
-        .single();
-      url_diario = data?.storage_url ?? null;
-    }
+    const { data } = await scraperSupabase
+      .from("diarios")
+      .select("storage_url")
+      .eq("arquivo_nome", fontes[0].arquivo)
+      .single();
+    url_diario = data?.storage_url ?? null;
 
     await monitorSupabase.from("analises").insert({
       monitor_id: record.id ?? null,
