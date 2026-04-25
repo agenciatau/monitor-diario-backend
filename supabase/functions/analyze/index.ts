@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "@supabase/supabase-js";
 import { buildInstructions } from "../_shared/instructions.ts";
 import { generateResumo, getMostRecentFileId, searchVectorStore } from "../_shared/openai.ts";
 
