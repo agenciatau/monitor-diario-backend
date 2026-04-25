@@ -1,4 +1,5 @@
 import OpenAI from "npm:openai@4";
+import { marked } from "npm:marked@9";
 import { enrichEntities } from "./wikidata.ts";
 
 export const openai = new OpenAI({ apiKey: Deno.env.get("OPEN_API_KEY")! });
@@ -77,7 +78,8 @@ export async function searchVectorStore(
     }
   }
 
-  return { resposta, fontes, model };
+  const respostaHtml = marked(resposta) as string;
+  return { resposta: respostaHtml, fontes, model };
 }
 
 export async function queryVectorStore(
