@@ -88,6 +88,19 @@ export async function queryVectorStore(
   return { resposta, fontes, wikidata };
 }
 
+export async function generateResumo(resposta: string): Promise<string> {
+  const result = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{
+      role: "user",
+      content: `Resuma o seguinte texto em 2 a 3 frases curtas e diretas:\n\n${resposta.slice(0, 3000)}`,
+    }],
+    max_tokens: 150,
+    temperature: 0,
+  });
+  return result.choices[0].message.content?.trim() ?? "";
+}
+
 async function enrichWikidata(texto: string) {
   try {
     const extraction = await openai.chat.completions.create({

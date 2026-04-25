@@ -1,10 +1,15 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildInstructions } from "../_shared/instructions.ts";
-import { getMostRecentFileId, searchVectorStore } from "../_shared/openai.ts";
+import { generateResumo, getMostRecentFileId, searchVectorStore } from "../_shared/openai.ts";
 
 const monitorSupabase = createClient(
   Deno.env.get("MONITOR_SUPABASE_URL")!,
   Deno.env.get("MONITOR_SUPABASE_KEY")!,
+);
+
+const scraperSupabase = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_KEY")!,
 );
 
 const ESTADO_NOMES: Record<string, string> = {
@@ -50,15 +55,29 @@ Deno.serve(async (req) => {
     const fileId = await getMostRecentFileId(estadoNome) ?? undefined;
     const { resposta, fontes } = await searchVectorStore(pergunta, instructions, fileId);
 
+    const resumo = await generateResumo(resposta);
+
+    let url_diario: string | null = null;
+    if (fontes.length > 0) {
+      const { data } = await scraperSupabase
+        .from("diarios")
+        .select("storage_url")
+        .eq("arquivo_nome", fontes[0].arquivo)
+        .single();
+      url_diario = data?.storage_url ?? null;
+    }
+
     await monitorSupabase.from("analises").insert({
       monitor_id: record.id ?? null,
       uf,
       resposta,
       fontes,
       wikidata: [],
+      resumo,
+      url_diario,
     });
 
-    return new Response(JSON.stringify({ resposta, fontes, wikidata: [] }), {
+    return new Response(JSON.stringify({ resposta, resumo, fontes, wikidata: [], url_diario }), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (e) {
