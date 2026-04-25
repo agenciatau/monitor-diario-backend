@@ -38,8 +38,9 @@ export async function searchVectorStore(
   pergunta: string,
   instructions: string,
   fileId?: string,
-): Promise<{ resposta: string; fontes: { arquivo: string }[] }> {
+): Promise<{ resposta: string; fontes: { arquivo: string }[]; model: string }> {
   const vectorStoreId = Deno.env.get("VECTOR_STORE_ID")!;
+  const model = Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini";
 
   const fileSearchTool: Record<string, unknown> = {
     type: "file_search",
@@ -50,7 +51,7 @@ export async function searchVectorStore(
   }
 
   const response = await openai.responses.create({
-    model: "gpt-4o-mini",
+    model,
     instructions,
     input: pergunta,
     tools: [fileSearchTool as Parameters<typeof openai.responses.create>[0]["tools"][0]],
@@ -76,7 +77,7 @@ export async function searchVectorStore(
     }
   }
 
-  return { resposta, fontes };
+  return { resposta, fontes, model };
 }
 
 export async function queryVectorStore(

@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
 
   try {
     const fileId = await getMostRecentFileId(estadoNome) ?? undefined;
-    const { resposta, fontes } = await searchVectorStore(pergunta, instructions, fileId);
+    const { resposta, fontes, model } = await searchVectorStore(pergunta, instructions, fileId);
 
     const resumo = await generateResumo(resposta);
 
@@ -75,6 +75,7 @@ Deno.serve(async (req) => {
       wikidata: [],
       resumo,
       url_diario,
+      model,
     });
 
     return new Response(JSON.stringify({ resposta, resumo, fontes, wikidata: [], url_diario }), {
