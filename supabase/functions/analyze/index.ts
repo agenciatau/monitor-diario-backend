@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildInstructions } from "../_shared/instructions.ts";
-import { queryVectorStore } from "../_shared/openai.ts";
+import { getMostRecentFileId, searchVectorStore } from "../_shared/openai.ts";
 
 const monitorSupabase = createClient(
   Deno.env.get("MONITOR_SUPABASE_URL")!,
@@ -47,17 +47,18 @@ Deno.serve(async (req) => {
     (keywords ? ` sobre: ${keywords}.` : ".");
 
   try {
-    const result = await queryVectorStore(pergunta, instructions);
+    const fileId = await getMostRecentFileId(estadoNome) ?? undefined;
+    const { resposta, fontes } = await searchVectorStore(pergunta, instructions, fileId);
 
     await monitorSupabase.from("analises").insert({
       monitor_id: record.id ?? null,
       uf,
-      resposta: result.resposta,
-      fontes: result.fontes,
-      wikidata: result.wikidata,
+      resposta,
+      fontes,
+      wikidata: [],
     });
 
-    return new Response(JSON.stringify(result), {
+    return new Response(JSON.stringify({ resposta, fontes, wikidata: [] }), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (e) {

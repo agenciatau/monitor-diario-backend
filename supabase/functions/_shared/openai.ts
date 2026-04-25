@@ -9,17 +9,51 @@ export interface AnalysisResult {
   wikidata: Awaited<ReturnType<typeof enrichEntities>>;
 }
 
-export async function queryVectorStore(
+function normalizeEstado(nome: string): string {
+  return nome.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "_");
+}
+
+export async function getMostRecentFileId(estadoNome: string): Promise<string | null> {
+  const vectorStoreId = Deno.env.get("VECTOR_STORE_ID")!;
+
+  const vsFiles = await openai.beta.vectorStores.files.list(vectorStoreId, { limit: 100 });
+  if (vsFiles.data.length === 0) return null;
+
+  const fileDetails = await Promise.all(vsFiles.data.map((f) => openai.files.retrieve(f.id)));
+  const prefix = normalizeEstado(estadoNome);
+
+  const matched = fileDetails
+    .filter((f) => f.filename.startsWith(prefix + "_"))
+    .map((f) => {
+      const dateMatch = f.filename.match(/_(\d{8})/);
+      const date = dateMatch ? dateMatch[1] : "";
+      return { id: f.id, date };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  return matched.length > 0 ? matched[0].id : null;
+}
+
+export async function searchVectorStore(
   pergunta: string,
   instructions: string,
-): Promise<AnalysisResult> {
+  fileId?: string,
+): Promise<{ resposta: string; fontes: { arquivo: string }[] }> {
   const vectorStoreId = Deno.env.get("VECTOR_STORE_ID")!;
+
+  const fileSearchTool: Record<string, unknown> = {
+    type: "file_search",
+    vector_store_ids: [vectorStoreId],
+  };
+  if (fileId) {
+    fileSearchTool.filters = { type: "eq", key: "file_id", value: fileId };
+  }
 
   const response = await openai.responses.create({
     model: "gpt-4o-mini",
     instructions,
     input: pergunta,
-    tools: [{ type: "file_search", vector_store_ids: [vectorStoreId] }],
+    tools: [fileSearchTool as Parameters<typeof openai.responses.create>[0]["tools"][0]],
   });
 
   let resposta = "";
@@ -42,8 +76,15 @@ export async function queryVectorStore(
     }
   }
 
-  const wikidata = resposta ? await enrichWikidata(resposta) : [];
+  return { resposta, fontes };
+}
 
+export async function queryVectorStore(
+  pergunta: string,
+  instructions: string,
+): Promise<AnalysisResult> {
+  const { resposta, fontes } = await searchVectorStore(pergunta, instructions);
+  const wikidata = resposta ? await enrichWikidata(resposta) : [];
   return { resposta, fontes, wikidata };
 }
 
