@@ -1,4 +1,4 @@
-import OpenAI from "npm:openai@4";
+import OpenAI from "openai";
 
 const openai = new OpenAI({ apiKey: Deno.env.get("OPEN_API_KEY")! });
 

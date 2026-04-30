@@ -22,11 +22,11 @@
  *   SE  scrape    https://iose.se.gov.br/diario-oficial
  */
 
-import "npm:dotenv/config";
-import { createClient } from "npm:@supabase/supabase-js@2";
-import OpenAI from "npm:openai@4";
-import { load as cheerio } from "npm:cheerio@1";
-import { join } from "jsr:@std/path@1";
+import "dotenv/config";
+import { createClient } from "@supabase/supabase-js";
+import OpenAI from "openai";
+import { load as cheerio } from "cheerio";
+import { join } from "@std/path";
 
 // ── Environment ────────────────────────────────────────────────────────────
 
@@ -34,16 +34,27 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_KEY = Deno.env.get("SUPABASE_KEY")!;
 const OPENAI_API_KEY = Deno.env.get("OPEN_API_KEY");
 const VECTOR_STORE_ID = Deno.env.get("VECTOR_STORE_ID");
+const MONITOR_SUPABASE_URL = Deno.env.get("MONITOR_SUPABASE_URL");
+const MONITOR_SUPABASE_KEY = Deno.env.get("MONITOR_SUPABASE_KEY");
 const STORAGE_BUCKET = "diarios-oficiais";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const monitorSupabase = (MONITOR_SUPABASE_URL && MONITOR_SUPABASE_KEY)
+  ? createClient(MONITOR_SUPABASE_URL, MONITOR_SUPABASE_KEY)
+  : null;
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 const HEADERS = { "User-Agent": "Mozilla/5.0 (compatible; DiarioBot/1.0)" };
 
+const ESTADO_TO_UF: Record<string, string> = {
+  alagoas: "AL", bahia: "BA", ceara: "CE", maranhao: "MA",
+  paraiba: "PB", pernambuco: "PE", piaui: "PI",
+  rio_grande_do_norte: "RN", sergipe: "SE",
+};
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type Strategy = "scrape" | "date_pattern" | "date_pattern_pt" | "id_range";
+type Strategy = "scrape" | "date_pattern" | "date_pattern_pt" | "id_range" | "json_api";
 
 interface SiteConfig {
   strategy: Strategy;
@@ -53,6 +64,8 @@ interface SiteConfig {
   days_back?: number;
   id_start?: number;
   id_count?: number;
+  api_url?: string;
+  api_base_url?: string;
 }
 
 // ── Sites ──────────────────────────────────────────────────────────────────
@@ -96,10 +109,10 @@ const sites: Record<string, SiteConfig> = {
     days_back: 15,
   },
   piaui: {
-    // React SPA — scraping may return no links; kept for completeness
-    strategy: "scrape",
-    url_lista: "https://www.diario.pi.gov.br/doe/busca",
-    selector: 'a[href$=".pdf"], a[href*="anexo"]',
+    // DataTables JSON API — POST to /doe/Api/listardiarios.json
+    strategy: "json_api",
+    api_url: "https://www.diario.pi.gov.br/doe/Api/listardiarios.json",
+    api_base_url: "https://www.diario.pi.gov.br/doe/",
   },
   rio_grande_do_norte: {
     // Legacy DEI webdisk — predictable by ISO date (updated from old scrape URL)
@@ -122,6 +135,13 @@ function yyyymmdd(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}${m}${dd}`;
+}
+
+function hhmmss(d: Date): string {
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const s = String(d.getSeconds()).padStart(2, "0");
+  return `${h}${m}${s}`;
 }
 
 function* recentBusinessDays(n: number): Generator<Date> {
@@ -294,6 +314,41 @@ function generateIdRangeUrls(
 
 // ── Link collection ────────────────────────────────────────────────────────
 
+async function collectJsonApiLinks(
+  config: SiteConfig,
+): Promise<[string, string | null][]> {
+  const { api_url, api_base_url } = config;
+  try {
+    const resp = await fetch(api_url!, {
+      method: "POST",
+      headers: {
+        ...HEADERS,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": api_base_url!,
+      },
+      body: "filter_numero=&filter_data=&draw=1&start=0&length=20",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const json = await resp.json();
+    const results: [string, string | null][] = [];
+    for (const row of json.data ?? []) {
+      const html: string = row[0] ?? "";
+      const dateStr: string = row[2] ?? ""; // "DD/MM/YYYY"
+      const hrefMatch = html.match(/href="([^"]+\.pdf[^"]*)"/i);
+      if (!hrefMatch) continue;
+      const absUrl = new URL(hrefMatch[1], api_base_url).href;
+      const dateParts = dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      const date = dateParts ? `${dateParts[3]}${dateParts[2]}${dateParts[1]}` : null;
+      results.push([absUrl, date]);
+    }
+    return results;
+  } catch (e) {
+    console.error(`  Erro ao acessar API ${api_url}: ${e}`);
+    return [];
+  }
+}
+
 async function collectLinks(
   config: SiteConfig,
 ): Promise<[string, string | null][]> {
@@ -304,6 +359,9 @@ async function collectLinks(
   }
   if (strategy === "date_pattern_pt") {
     return generateParaibaUrls(config.days_back!);
+  }
+  if (strategy === "json_api") {
+    return collectJsonApiLinks(config);
   }
   if (strategy === "id_range") {
     return generateIdRangeUrls(
@@ -374,7 +432,7 @@ async function saveToSupabase(
   estado: string,
   datePub: string,
   fileName: string,
-): Promise<void> {
+): Promise<boolean> {
   const storagePath = `${estado}/${fileName}`;
   try {
     const fileData = await Deno.readFile(localPath);
@@ -385,15 +443,21 @@ async function saveToSupabase(
     const { data: urlData } = supabase.storage
       .from(STORAGE_BUCKET)
       .getPublicUrl(storagePath);
-    await supabase.from("diarios").insert({
+    const { error } = await supabase.from("diarios").insert({
       estado,
       data_publicacao: `${datePub.slice(0, 4)}-${datePub.slice(4, 6)}-${datePub.slice(6, 8)}`,
       arquivo_nome: fileName,
       storage_url: urlData.publicUrl,
     });
+    if (error) {
+      console.error(`  Erro ao inserir no banco (${fileName}): ${error.message}`);
+      return false;
+    }
     console.log(`  ↑ Supabase: ${storagePath}`);
+    return true;
   } catch (e) {
     console.error(`  Erro ao salvar no Supabase (${fileName}): ${e}`);
+    return false;
   }
 }
 
@@ -428,6 +492,65 @@ async function sendToVectorStore(
   }
 }
 
+// ── Analysis trigger ───────────────────────────────────────────────────────
+
+async function triggerAnalysisForStates(states: Set<string>): Promise<void> {
+  if (!monitorSupabase) {
+    console.log("\n⚠ MONITOR_SUPABASE não configurado — análises não serão disparadas.");
+    return;
+  }
+  if (states.size === 0) return;
+
+  const analyzeUrl = `${SUPABASE_URL}/functions/v1/analyze`;
+  console.log(`\n=== DISPARANDO ANÁLISES para ${states.size} estado(s) ===`);
+
+  for (const estado of states) {
+    const uf = ESTADO_TO_UF[estado];
+    if (!uf) continue;
+
+    const { data: monitors, error } = await monitorSupabase
+      .from("monitores")
+      .select("*")
+      .eq("uf", uf)
+      .eq("is_active", true);
+
+    if (error) {
+      console.error(`  Erro ao buscar monitores para ${uf}: ${error.message}`);
+      continue;
+    }
+    if (!monitors?.length) {
+      console.log(`  ${uf}: nenhum monitor ativo`);
+      continue;
+    }
+
+    console.log(`  ${uf}: ${monitors.length} monitor(es) ativo(s)`);
+    for (const monitor of monitors) {
+      console.log(`    → Monitor ${monitor.id}...`);
+      try {
+        const resp = await fetch(analyzeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${SUPABASE_KEY}`,
+          },
+          body: JSON.stringify({ record: monitor }),
+          signal: AbortSignal.timeout(180_000),
+        });
+        const result = await resp.json();
+        if (result.ignorado) {
+          console.log(`    ✗ ${result.ignorado}`);
+        } else if (result.erro) {
+          console.error(`    ✗ Erro: ${result.erro}`);
+        } else {
+          console.log(`    ✓ Análise salva (${String(result.resumo ?? "").slice(0, 80)})`);
+        }
+      } catch (e) {
+        console.error(`    Erro ao chamar analyze para monitor ${monitor.id}: ${e}`);
+      }
+    }
+  }
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -438,11 +561,16 @@ async function main() {
   await Deno.mkdir(DOWNLOAD_DIR, { recursive: true });
 
   let totalDownloaded = 0;
+  const statesWithNewDiarios = new Set<string>();
+
+  // Load already-saved filenames from DB so we skip re-processing across runs
+  const { data: existingDiarios } = await supabase
+    .from("diarios")
+    .select("arquivo_nome");
   const usedNames = new Set<string>(
-    (await Array.fromAsync(Deno.readDir(DOWNLOAD_DIR)))
-      .map((e) => e.name),
+    (existingDiarios ?? []).map((d: { arquivo_nome: string }) => d.arquivo_nome),
   );
-  const dateCounts: Record<string, number> = {};
+
 
   // Shuffle states for variety
   const estados = Object.keys(sites).sort(() => Math.random() - 0.5);
@@ -466,6 +594,16 @@ async function main() {
       if (totalDownloaded >= TARGET || stateCount >= MAX_PER_STATE) break;
       if (seenUrls.has(url)) continue;
       seenUrls.add(url);
+
+      // Skip early if we already have a file for this state+date
+      if (knownDate) {
+        const prefix = `${estado}_${knownDate}`;
+        const alreadySaved = [...usedNames].some((n) => n.startsWith(prefix));
+        if (alreadySaved) {
+          console.log(`  Já existe: ${prefix} — ignorado.`);
+          continue;
+        }
+      }
 
       const tmpPath = join(DOWNLOAD_DIR, `_tmp_${estado}_${Date.now()}.pdf`);
       console.log(`  Baixando ${url} ...`);
@@ -492,31 +630,24 @@ async function main() {
         extractDateFromPdfBytes(data) ??
         yyyymmdd(new Date());
 
-      // Build filename; handle same-state/same-date duplicates
-      const key = `${estado}_${date}`;
-      const idx = (dateCounts[key] ?? 0) + 1;
-      dateCounts[key] = idx;
-
-      let suffix = idx > 1 ? `_${idx}` : "";
-      let fileName = `${estado}_${date}${suffix}.pdf`;
-
-      // Safety: never overwrite existing file
-      while (usedNames.has(fileName)) {
-        const nextIdx = (dateCounts[key] ?? idx) + 1;
-        dateCounts[key] = nextIdx;
-        suffix = `_${nextIdx}`;
-        fileName = `${estado}_${date}${suffix}.pdf`;
-      }
+      // Timestamp-based filename: unique even when multiple diarios are published the same day
+      const fileName = `${estado}_${date}_${hhmmss(new Date())}.pdf`;
 
       const finalPath = join(DOWNLOAD_DIR, fileName);
       await Deno.rename(tmpPath, finalPath);
       usedNames.add(fileName);
 
-      await saveToSupabase(finalPath, estado, date, fileName);
+      const isNew = await saveToSupabase(finalPath, estado, date, fileName);
+      if (!isNew) {
+        await sleep(1000);
+        continue;
+      }
+
       await sendToVectorStore(finalPath, fileName);
 
       totalDownloaded++;
       stateCount++;
+      statesWithNewDiarios.add(estado);
       console.log(`  ✓ Salvo: ${fileName}  (${totalDownloaded}/${TARGET})`);
 
       await sleep(1000);
@@ -526,6 +657,8 @@ async function main() {
   console.log(
     `\nConcluído. ${totalDownloaded} PDFs textuais salvos em '${DOWNLOAD_DIR}'.`,
   );
+
+  await triggerAnalysisForStates(statesWithNewDiarios);
 }
 
 function sleep(ms: number): Promise<void> {

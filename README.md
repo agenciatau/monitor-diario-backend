@@ -12,21 +12,19 @@ Ferramenta de investigação de diários oficiais estaduais do Nordeste brasilei
 
 ## Pré-requisitos
 
-- Python 3.10+ (scraper)
+- Deno 2.x (scraper)
 - Chave de API da OpenAI (com acesso à Responses API)
 - Conta no Supabase (dois projetos: scraper e monitor/frontend)
 - Supabase CLI (para deploy das Edge Functions)
 
-## Instalação (scraper)
+## Instalação
 
 ```bash
 git clone <url-do-repositorio>
 cd tatu
 
-python3 -m venv .venv
-source .venv/bin/activate  # No Windows: .venv\Scripts\activate
-
-pip3 install -r requirements.txt
+# Instalar Deno (caso não tenha)
+curl -fsSL https://deno.land/install.sh | sh
 ```
 
 ## Configuração
@@ -35,7 +33,7 @@ Crie um arquivo `.env` na raiz do projeto:
 
 ```env
 OPEN_API_KEY=sua_chave_openai_aqui
-VECTOR_STORE_ID=        # preenchido automaticamente pelo upload_pdfs.py
+VECTOR_STORE_ID=        # ID do Vector Store da OpenAI
 SUPABASE_URL=https://<projeto-scraper>.supabase.co
 SUPABASE_KEY=sua_service_role_key_aqui
 MONITOR_SUPABASE_URL=https://<projeto-monitor>.supabase.co
@@ -86,18 +84,19 @@ create table analises (
 
 ## Uso
 
-### 1. Baixar PDFs e indexar no Vector Store
+### 1. Executar o scraper
 
 ```bash
-python3 pdfs_scraper.py
-python3 upload_pdfs.py
+deno run --allow-net --allow-read --allow-write --allow-env \
+  --unsafely-ignore-certificate-errors=dool.egba.ba.gov.br \
+  pdfs_scraper.ts
 ```
 
-O scraper coleta PDFs dos 9 estados do Nordeste (AL, BA, CE, MA, PB, PE, PI, RN, SE), valida a camada de texto, faz upload ao Supabase Storage e registra os metadados na tabela `diarios`. O `upload_pdfs.py` sincroniza os novos PDFs com o Vector Store da OpenAI.
+O scraper coleta PDFs dos 9 estados do Nordeste (AL, BA, CE, MA, PB, PE, PI, RN, SE), valida a camada de texto, faz upload ao Supabase Storage, registra os metadados na tabela `diarios` e indexa os arquivos no Vector Store da OpenAI.
 
-### 2. Agendar coleta diária (GitHub Actions)
+### 2. Agendar coleta diária
 
-O workflow `.github/workflows/daily_scraper.yml` executa o scraper e a sincronização com o Vector Store automaticamente de segunda a sexta às 06h BRT.
+**GitHub Actions:** O workflow `.github/workflows/daily_scraper.yml` executa o scraper automaticamente de segunda a sexta às 06h BRT.
 
 Adicione as seguintes variáveis como **Actions Secrets** no repositório (`Settings → Secrets and variables → Actions`):
 
@@ -108,9 +107,15 @@ Adicione as seguintes variáveis como **Actions Secrets** no repositório (`Sett
 | `OPEN_API_KEY` | Chave da OpenAI |
 | `VECTOR_STORE_ID` | ID do Vector Store da OpenAI |
 
+**Cron local:** Use o script `run_scraper.sh` e adicione ao crontab:
+
+```bash
+0 6 * * 1-5 /caminho/para/tatu/run_scraper.sh >> /caminho/para/tatu/logs/scraper.log 2>&1
+```
+
 ### 3. Deploy das Edge Functions
 
-As Edge Functions substituem a API Django e rodam diretamente no Supabase (sem servidor externo).
+As Edge Functions rodam diretamente no Supabase (sem servidor externo).
 
 ```bash
 # Instalar Supabase CLI
@@ -139,6 +144,27 @@ No dashboard do projeto monitor:
 - Target: **Supabase Edge Function → analyze**
 
 A partir daí, toda vez que um novo monitoramento for criado no frontend, a análise é gerada automaticamente e salva em `analises`.
+
+## Estrutura do projeto
+
+```
+tatu/
+├── pdfs_scraper.ts              # Scraper principal (Deno/TypeScript)
+├── run_scraper.sh               # Wrapper para cron local
+├── .github/
+│   └── workflows/
+│       └── daily_scraper.yml    # GitHub Actions (coleta diária)
+└── supabase/
+    ├── config.toml              # Configuração das Edge Functions
+    └── functions/
+        ├── _shared/
+        │   ├── openai.ts        # Consulta ao Vector Store
+        │   ├── instructions.ts  # Builder de prompt dinâmico
+        │   └── wikidata.ts      # Enriquecimento via Wikidata
+        ├── chat/index.ts        # Endpoint de perguntas
+        ├── analyze/index.ts     # Handler do webhook de análise
+        └── upload/index.ts      # Endpoint de upload de PDF
+```
 
 ## Edge Functions
 
