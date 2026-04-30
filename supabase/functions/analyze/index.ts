@@ -46,17 +46,24 @@ Deno.serve(async (req) => {
 
   try {
     const recentFile = await getMostRecentFileId(estadoNome);
-    const fileId = recentFile?.id;
+    console.log(`[analyze] getMostRecentFileId(${estadoNome}):`, JSON.stringify(recentFile));
 
-    const dataFormatada = recentFile?.date
-      ? `${recentFile.date.slice(6, 8)}/${recentFile.date.slice(4, 6)}/${recentFile.date.slice(0, 4)}`
-      : "data desconhecida";
+    if (!recentFile) {
+      return new Response(
+        JSON.stringify({ ignorado: `Nenhum arquivo encontrado no vector store para ${estadoNome}.` }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const fileId = recentFile.id;
+    const dataFormatada = `${recentFile.date.slice(6, 8)}/${recentFile.date.slice(4, 6)}/${recentFile.date.slice(0, 4)}`;
 
     const pergunta =
       `Analise o PDF do Diário Oficial de ${estadoNome} (${uf}), do dia ${dataFormatada}, ` +
       `e identifique SOMENTE informações realmente relevantes relacionadas ao tema e palavras-chave definidos nas instruções.`;
 
     const { resposta, fontes, model } = await searchVectorStore(pergunta, instructions, fileId);
+    console.log(`[analyze] searchVectorStore: fontes=${JSON.stringify(fontes)}, resposta length=${resposta.length}`);
 
     if (fontes.length === 0) {
       return new Response(
@@ -68,14 +75,14 @@ Deno.serve(async (req) => {
     const resumo = await generateResumo(resposta);
 
     let url_diario: string | null = null;
-    const { data } = await scraperSupabase
+    const { data: diarioData } = await scraperSupabase
       .from("diarios")
       .select("storage_url")
       .eq("arquivo_nome", fontes[0].arquivo)
       .single();
-    url_diario = data?.storage_url ?? null;
+    url_diario = diarioData?.storage_url ?? null;
 
-    await monitorSupabase.from("analises").insert({
+    const { error: insertError } = await monitorSupabase.from("analises").insert({
       monitor_id: record.id ?? null,
       uf,
       resposta,
@@ -86,10 +93,17 @@ Deno.serve(async (req) => {
       model,
     });
 
+    if (insertError) {
+      console.error(`[analyze] insert error:`, JSON.stringify(insertError));
+      return new Response(JSON.stringify({ erro: `Erro ao salvar análise: ${insertError.message}` }), { status: 500 });
+    }
+
+    console.log(`[analyze] analise salva com sucesso para monitor ${record.id} (${uf})`);
     return new Response(JSON.stringify({ resposta, resumo, fontes, wikidata: [], url_diario }), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (e) {
+    console.error(`[analyze] erro inesperado:`, e);
     return new Response(JSON.stringify({ erro: `Erro: ${e}` }), { status: 502 });
   }
 });
