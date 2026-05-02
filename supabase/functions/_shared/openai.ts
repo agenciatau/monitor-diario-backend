@@ -104,7 +104,7 @@ export async function generateResumo(resposta: string): Promise<string> {
   return result.choices[0].message.content?.trim() ?? "";
 }
 
-async function enrichWikidata(texto: string) {
+export async function enrichWikidata(texto: string) {
   try {
     const extraction = await openai.chat.completions.create({
       model: "gpt-4o-mini",

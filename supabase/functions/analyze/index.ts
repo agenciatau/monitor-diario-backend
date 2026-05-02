@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { buildInstructions } from "../_shared/instructions.ts";
-import { generateResumo, getMostRecentFileId, searchVectorStore } from "../_shared/openai.ts";
+import { enrichWikidata, generateResumo, getMostRecentFileId, searchVectorStore } from "../_shared/openai.ts";
 
 const MONITOR_SUPABASE_URL = Deno.env.get("MONITOR_SUPABASE_URL");
 const MONITOR_SUPABASE_KEY = Deno.env.get("MONITOR_SUPABASE_KEY");
@@ -102,28 +102,47 @@ Deno.serve(async (req) => {
 
     const resumo = await generateResumo(resposta);
 
-    const estadoKey = UF_TO_ESTADO[uf] ?? uf.toLowerCase();
-    const dataPub = `${recentFile.date.slice(0, 4)}-${recentFile.date.slice(4, 6)}-${recentFile.date.slice(6, 8)}`;
-    const { data: diarioData, error: diarioError } = await scraperSupabase
+    // Strategy 1: match by exact arquivo_nome (most precise)
+    let url_diario: string | null = null;
+    const { data: d1, error: e1 } = await scraperSupabase
       .from("diarios")
       .select("storage_url")
-      .eq("estado", estadoKey)
-      .eq("data_publicacao", dataPub)
-      .order("criado_em", { ascending: false })
-      .limit(1)
+      .eq("arquivo_nome", fontesParaSalvar[0].arquivo)
       .single();
-    if (diarioError) console.warn(`[analyze] url_diario lookup failed:`, JSON.stringify(diarioError));
-    const url_diario: string | null = diarioData?.storage_url ?? null;
-    console.log(`[analyze] url_diario para ${estadoKey}/${dataPub}:`, url_diario);
+    if (e1) console.warn(`[analyze] url_diario by arquivo_nome failed:`, JSON.stringify(e1));
+    url_diario = d1?.storage_url ?? null;
+
+    // Strategy 2: fallback — match by estado + date range (handles DATE and TIMESTAMP columns)
+    if (!url_diario) {
+      const estadoKey = UF_TO_ESTADO[uf] ?? uf.toLowerCase();
+      const datePub = recentFile.date;
+      const dateStart = `${datePub.slice(0, 4)}-${datePub.slice(4, 6)}-${datePub.slice(6, 8)}`;
+      const nextDay = new Date(`${dateStart}T00:00:00Z`);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const dateEnd = nextDay.toISOString().slice(0, 10);
+      const { data: d2, error: e2 } = await scraperSupabase
+        .from("diarios")
+        .select("storage_url")
+        .eq("estado", estadoKey)
+        .gte("data_publicacao", dateStart)
+        .lt("data_publicacao", dateEnd)
+        .order("criado_em", { ascending: false })
+        .limit(1)
+        .single();
+      if (e2) console.warn(`[analyze] url_diario by estado+date failed:`, JSON.stringify(e2));
+      url_diario = d2?.storage_url ?? null;
+    }
+    console.log(`[analyze] url_diario:`, url_diario);
 
     const respostaComLinks = url_diario ? addDiarioLinks(resposta, url_diario) : resposta;
+    const wikidata = await enrichWikidata(resposta);
 
     const { error: insertError } = await monitorSupabase.from("analises").insert({
       monitor_id: record.id ?? null,
       uf,
       resposta: respostaComLinks,
       fontes: fontesParaSalvar,
-      wikidata: [],
+      wikidata,
       resumo,
       url_diario,
       model,
@@ -135,7 +154,7 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[analyze] analise salva com sucesso para monitor ${record.id} (${uf})`);
-    return new Response(JSON.stringify({ resposta: respostaComLinks, resumo, fontes, wikidata: [], url_diario }), {
+    return new Response(JSON.stringify({ resposta: respostaComLinks, resumo, fontes, wikidata, url_diario }), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (e) {
