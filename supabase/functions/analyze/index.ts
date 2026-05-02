@@ -2,20 +2,21 @@ import { createClient } from "@supabase/supabase-js";
 import { buildInstructions } from "../_shared/instructions.ts";
 import { generateResumo, getMostRecentFileId, searchVectorStore } from "../_shared/openai.ts";
 
-const monitorSupabase = createClient(
-  Deno.env.get("MONITOR_SUPABASE_URL")!,
-  Deno.env.get("MONITOR_SUPABASE_KEY")!,
-);
-
-const scraperSupabase = createClient(
-  Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_KEY")!,
-);
+const MONITOR_SUPABASE_URL = Deno.env.get("MONITOR_SUPABASE_URL");
+const MONITOR_SUPABASE_KEY = Deno.env.get("MONITOR_SUPABASE_KEY");
+const SCRAPER_SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+const SCRAPER_SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_ANON_KEY");
 
 const ESTADO_NOMES: Record<string, string> = {
   AL: "Alagoas", BA: "Bahia", CE: "Ceará", MA: "Maranhão",
   PB: "Paraíba", PE: "Pernambuco", PI: "Piauí", RN: "Rio Grande do Norte",
   SE: "Sergipe",
+};
+
+const UF_TO_ESTADO: Record<string, string> = {
+  AL: "alagoas", BA: "bahia", CE: "ceara", MA: "maranhao",
+  PB: "paraiba", PE: "pernambuco", PI: "piaui",
+  RN: "rio_grande_do_norte", SE: "sergipe",
 };
 
 Deno.serve(async (req) => {
@@ -35,6 +36,15 @@ Deno.serve(async (req) => {
   if (!Deno.env.get("VECTOR_STORE_ID")) {
     return new Response(JSON.stringify({ erro: "VECTOR_STORE_ID não configurado" }), { status: 503 });
   }
+  if (!MONITOR_SUPABASE_URL || !MONITOR_SUPABASE_KEY) {
+    return new Response(JSON.stringify({ erro: "MONITOR_SUPABASE_URL/KEY não configurados" }), { status: 503 });
+  }
+  if (!SCRAPER_SUPABASE_URL || !SCRAPER_SUPABASE_KEY) {
+    return new Response(JSON.stringify({ erro: "SUPABASE_URL/KEY não configurados" }), { status: 503 });
+  }
+
+  const monitorSupabase = createClient(MONITOR_SUPABASE_URL, MONITOR_SUPABASE_KEY);
+  const scraperSupabase = createClient(SCRAPER_SUPABASE_URL, SCRAPER_SUPABASE_KEY);
 
   const config = {
     descricao: record.description ?? null,
@@ -55,17 +65,20 @@ Deno.serve(async (req) => {
       );
     }
 
-    const fileId = recentFile.id;
     const dataFormatada = `${recentFile.date.slice(6, 8)}/${recentFile.date.slice(4, 6)}/${recentFile.date.slice(0, 4)}`;
 
     const pergunta =
       `Analise o PDF do Diário Oficial de ${estadoNome} (${uf}), do dia ${dataFormatada}, ` +
       `e identifique SOMENTE informações realmente relevantes relacionadas ao tema e palavras-chave definidos nas instruções.`;
 
-    const { resposta, fontes, model } = await searchVectorStore(pergunta, instructions, fileId);
-    console.log(`[analyze] searchVectorStore: fontes=${JSON.stringify(fontes)}, resposta length=${resposta.length}`);
+    const { resposta, fontes, model } = await searchVectorStore(pergunta, instructions);
 
-    if (fontes.length === 0) {
+    // Keep only sources from the most recent date
+    const recentFontes = fontes.filter((f) => f.arquivo.includes(recentFile.date));
+    const fontesParaSalvar = recentFontes.length > 0 ? recentFontes : fontes.slice(0, 1);
+    console.log(`[analyze] fontes filtradas: ${JSON.stringify(fontesParaSalvar)}, resposta length=${resposta.length}`);
+
+    if (fontesParaSalvar.length === 0) {
       return new Response(
         JSON.stringify({ ignorado: "Nenhuma fonte encontrada no diário mais recente; análise não salva." }),
         { headers: { "Content-Type": "application/json" } },
@@ -78,7 +91,7 @@ Deno.serve(async (req) => {
     const { data: diarioData } = await scraperSupabase
       .from("diarios")
       .select("storage_url")
-      .eq("arquivo_nome", fontes[0].arquivo)
+      .eq("arquivo_nome", fontesParaSalvar[0].arquivo)
       .single();
     url_diario = diarioData?.storage_url ?? null;
 
@@ -86,7 +99,7 @@ Deno.serve(async (req) => {
       monitor_id: record.id ?? null,
       uf,
       resposta,
-      fontes,
+      fontes: fontesParaSalvar,
       wikidata: [],
       resumo,
       url_diario,

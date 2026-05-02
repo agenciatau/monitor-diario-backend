@@ -19,7 +19,7 @@ export async function getMostRecentFileId(
 ): Promise<{ id: string; date: string } | null> {
   const vectorStoreId = Deno.env.get("VECTOR_STORE_ID")!;
 
-  const vsFiles = await openai.beta.vectorStores.files.list(vectorStoreId, { limit: 100 });
+  const vsFiles = await openai.vectorStores.files.list(vectorStoreId, { limit: 100 });
   if (vsFiles.data.length === 0) return null;
 
   const fileDetails = await Promise.all(vsFiles.data.map((f) => openai.files.retrieve(f.id)));
@@ -40,41 +40,38 @@ export async function getMostRecentFileId(
 export async function searchVectorStore(
   pergunta: string,
   instructions: string,
-  fileId?: string,
 ): Promise<{ resposta: string; fontes: { arquivo: string }[]; model: string }> {
   const vectorStoreId = Deno.env.get("VECTOR_STORE_ID")!;
   const model = Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini";
-
-  const fileSearchTool: Record<string, unknown> = {
-    type: "file_search",
-    vector_store_ids: [vectorStoreId],
-  };
-  if (fileId) {
-    fileSearchTool.filters = { type: "eq", key: "file_id", value: fileId };
-  }
 
   const response = await openai.responses.create({
     model,
     instructions,
     input: pergunta,
-    tools: [fileSearchTool as Parameters<typeof openai.responses.create>[0]["tools"][0]],
-  });
+    tools: [{ type: "file_search", vector_store_ids: [vectorStoreId] } as Parameters<typeof openai.responses.create>[0]["tools"][0]],
+    include: ["file_search_call.results"] as string[],
+  } as Parameters<typeof openai.responses.create>[0]);
 
   let resposta = "";
   const fontes: { arquivo: string }[] = [];
   const seenFiles = new Set<string>();
 
   for (const item of response.output) {
+    // file_search_call results contain the actual retrieved files
+    if ((item as { type: string }).type === "file_search_call") {
+      const call = item as { type: string; results?: { filename?: string; file_id?: string }[] };
+      for (const result of call.results ?? []) {
+        const filename = result.filename ?? result.file_id ?? "";
+        if (filename && !seenFiles.has(filename)) {
+          seenFiles.add(filename);
+          fontes.push({ arquivo: filename });
+        }
+      }
+    }
     if (item.type === "message") {
       for (const content of item.content) {
         if (content.type === "output_text") {
           resposta = content.text;
-          for (const annotation of (content as { annotations?: { type: string; filename: string }[] }).annotations ?? []) {
-            if (annotation.type === "file_citation" && !seenFiles.has(annotation.filename)) {
-              seenFiles.add(annotation.filename);
-              fontes.push({ arquivo: annotation.filename });
-            }
-          }
         }
       }
     }
@@ -92,6 +89,7 @@ export async function queryVectorStore(
   const wikidata = resposta ? await enrichWikidata(resposta) : [];
   return { resposta, fontes, wikidata };
 }
+
 
 export async function generateResumo(resposta: string): Promise<string> {
   const result = await openai.chat.completions.create({
