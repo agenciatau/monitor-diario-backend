@@ -2,22 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 import { buildInstructions } from "../_shared/instructions.ts";
 import { queryVectorStore } from "../_shared/openai.ts";
 
-const monitorSupabase = createClient(
-  Deno.env.get("MONITOR_SUPABASE_URL")!,
-  Deno.env.get("MONITOR_SUPABASE_KEY")!,
-);
-
-async function getMonitorConfig(estado: string) {
-  if (!estado) return null;
-  const { data } = await monitorSupabase
-    .from("monitores")
-    .select("uf, description, keywords")
-    .eq("uf", estado.toUpperCase().trim())
-    .eq("is_active", true)
-    .limit(1);
-  if (!data?.length) return null;
-  return { descricao: data[0].description, palavras_chave: data[0].keywords };
-}
+const MONITOR_SUPABASE_URL = Deno.env.get("MONITOR_SUPABASE_URL");
+const MONITOR_SUPABASE_KEY = Deno.env.get("MONITOR_SUPABASE_KEY");
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
@@ -33,7 +19,19 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ erro: "VECTOR_STORE_ID não configurado" }), { status: 503 });
   }
 
-  const config = await getMonitorConfig(estado ?? "");
+  let config = null;
+  if (estado && MONITOR_SUPABASE_URL && MONITOR_SUPABASE_KEY) {
+    const monitorSupabase = createClient(MONITOR_SUPABASE_URL, MONITOR_SUPABASE_KEY);
+    const { data } = await monitorSupabase
+      .from("monitores")
+      .select("uf, description, keywords")
+      .eq("uf", estado.toUpperCase().trim())
+      .eq("is_active", true)
+      .limit(1);
+    if (data?.length) {
+      config = { descricao: data[0].description, palavras_chave: data[0].keywords };
+    }
+  }
   const instructions = buildInstructions(config);
 
   try {

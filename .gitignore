@@ -15,6 +15,9 @@ memory
 # Diarios oficiais PDFs
 diarios-oficiais/
 
+# Diarios oficiais sync
+diarios_oficiais_sync/
+
 # VSCode
 .vscode
 
