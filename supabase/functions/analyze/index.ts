@@ -4,8 +4,8 @@ import { enrichWikidata, generateResumo, getMostRecentFileId, searchVectorStore 
 
 const MONITOR_SUPABASE_URL = Deno.env.get("MONITOR_SUPABASE_URL");
 const MONITOR_SUPABASE_KEY = Deno.env.get("MONITOR_SUPABASE_KEY");
-const SCRAPER_SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SCRAPER_SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_ANON_KEY");
+const SCRAPER_SUPABASE_URL = Deno.env.get("SCRAPER_SUPABASE_URL");
+const SCRAPER_SUPABASE_KEY = Deno.env.get("SCRAPER_SUPABASE_KEY");
 
 const ESTADO_NOMES: Record<string, string> = {
   AL: "Alagoas", BA: "Bahia", CE: "Ceará", MA: "Maranhão",
@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ erro: "MONITOR_SUPABASE_URL/KEY não configurados" }), { status: 503 });
   }
   if (!SCRAPER_SUPABASE_URL || !SCRAPER_SUPABASE_KEY) {
-    return new Response(JSON.stringify({ erro: "SUPABASE_URL/KEY não configurados" }), { status: 503 });
+    return new Response(JSON.stringify({ erro: "SCRAPER_SUPABASE_URL/KEY não configurados" }), { status: 503 });
   }
 
   const monitorSupabase = createClient(MONITOR_SUPABASE_URL, MONITOR_SUPABASE_KEY);
@@ -87,10 +87,21 @@ Deno.serve(async (req) => {
       `e identifique SOMENTE informações realmente relevantes relacionadas ao tema e palavras-chave definidos nas instruções.`;
 
     const { resposta, fontes, model } = await searchVectorStore(pergunta, instructions);
+    console.log(`[analyze] fontes brutas: ${JSON.stringify(fontes)}`);
 
-    // Keep only sources from the most recent date
-    const recentFontes = fontes.filter((f) => f.arquivo.includes(recentFile.date));
-    const fontesParaSalvar = recentFontes.length > 0 ? recentFontes : fontes.slice(0, 1);
+    const estadoKey = UF_TO_ESTADO[uf] ?? uf.toLowerCase();
+
+    // Filter by both state prefix AND date — prevents cross-state contamination
+    const recentFontes = fontes.filter(
+      (f) => f.arquivo.startsWith(estadoKey + "_") && f.arquivo.includes(recentFile.date),
+    );
+    // Fallback: any file from this state (right state, any date)
+    const stateFontes = fontes.filter((f) => f.arquivo.startsWith(estadoKey + "_"));
+    const fontesParaSalvar = recentFontes.length > 0
+      ? recentFontes
+      : stateFontes.length > 0
+      ? stateFontes.slice(0, 1)
+      : fontes.slice(0, 1); // last resort: keep first result even if wrong state
     console.log(`[analyze] fontes filtradas: ${JSON.stringify(fontesParaSalvar)}, resposta length=${resposta.length}`);
 
     if (fontesParaSalvar.length === 0) {
@@ -114,7 +125,6 @@ Deno.serve(async (req) => {
 
     // Strategy 2: fallback — match by estado + date range (handles DATE and TIMESTAMP columns)
     if (!url_diario) {
-      const estadoKey = UF_TO_ESTADO[uf] ?? uf.toLowerCase();
       const datePub = recentFile.date;
       const dateStart = `${datePub.slice(0, 4)}-${datePub.slice(4, 6)}-${datePub.slice(6, 8)}`;
       const nextDay = new Date(`${dateStart}T00:00:00Z`);
