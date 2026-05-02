@@ -19,6 +19,21 @@ const UF_TO_ESTADO: Record<string, string> = {
   RN: "rio_grande_do_norte", SE: "sergipe",
 };
 
+function addDiarioLinks(html: string, urlDiario: string): string {
+  // Match "Página X — Conferir trecho do Diário" or "Página X a Y — Conferir trecho do Diário"
+  // PDF #page=N fragment opens the PDF at that page in most browsers/viewers
+  return html.replace(
+    /Página (\d+)(?: a \d+)? — Conferir trecho do Diário/g,
+    (match, pagina) => {
+      const href = `${urlDiario}#page=${pagina}`;
+      return match.replace(
+        "Conferir trecho do Diário",
+        `<a href="${href}" target="_blank" rel="noopener noreferrer">Conferir trecho do Diário</a>`,
+      );
+    },
+  );
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ erro: "Method not allowed" }), { status: 405 });
@@ -87,18 +102,26 @@ Deno.serve(async (req) => {
 
     const resumo = await generateResumo(resposta);
 
-    let url_diario: string | null = null;
-    const { data: diarioData } = await scraperSupabase
+    const estadoKey = UF_TO_ESTADO[uf] ?? uf.toLowerCase();
+    const dataPub = `${recentFile.date.slice(0, 4)}-${recentFile.date.slice(4, 6)}-${recentFile.date.slice(6, 8)}`;
+    const { data: diarioData, error: diarioError } = await scraperSupabase
       .from("diarios")
       .select("storage_url")
-      .eq("arquivo_nome", fontesParaSalvar[0].arquivo)
+      .eq("estado", estadoKey)
+      .eq("data_publicacao", dataPub)
+      .order("criado_em", { ascending: false })
+      .limit(1)
       .single();
-    url_diario = diarioData?.storage_url ?? null;
+    if (diarioError) console.warn(`[analyze] url_diario lookup failed:`, JSON.stringify(diarioError));
+    const url_diario: string | null = diarioData?.storage_url ?? null;
+    console.log(`[analyze] url_diario para ${estadoKey}/${dataPub}:`, url_diario);
+
+    const respostaComLinks = url_diario ? addDiarioLinks(resposta, url_diario) : resposta;
 
     const { error: insertError } = await monitorSupabase.from("analises").insert({
       monitor_id: record.id ?? null,
       uf,
-      resposta,
+      resposta: respostaComLinks,
       fontes: fontesParaSalvar,
       wikidata: [],
       resumo,
@@ -112,7 +135,7 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[analyze] analise salva com sucesso para monitor ${record.id} (${uf})`);
-    return new Response(JSON.stringify({ resposta, resumo, fontes, wikidata: [], url_diario }), {
+    return new Response(JSON.stringify({ resposta: respostaComLinks, resumo, fontes, wikidata: [], url_diario }), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (e) {
