@@ -3,9 +3,12 @@ enabled = true
 
 [functions.chat]
 verify_jwt = false
+import_map = "./functions/deno.json"
 
 [functions.upload]
 verify_jwt = false
+import_map = "./functions/deno.json"
 
 [functions.analyze]
 verify_jwt = false
+import_map = "./functions/deno.json"
