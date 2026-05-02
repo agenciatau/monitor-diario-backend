@@ -4,7 +4,7 @@ import { enrichWikidata, generateResumo, getMostRecentFileId, searchVectorStore 
 
 const MONITOR_SUPABASE_URL = Deno.env.get("MONITOR_SUPABASE_URL");
 const MONITOR_SUPABASE_KEY = Deno.env.get("MONITOR_SUPABASE_KEY");
-const SCRAPER_SUPABASE_URL = Deno.env.get("SCRAPER_SUPABASE_URL");
+const SCRAPER_SUPABASE_URL = Deno.env.get("SCRAPER_SUPABASE_URL")?.replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
 const SCRAPER_SUPABASE_KEY = Deno.env.get("SCRAPER_SUPABASE_KEY");
 
 const ESTADO_NOMES: Record<string, string> = {
@@ -95,8 +95,14 @@ Deno.serve(async (req) => {
     const recentFontes = fontes.filter(
       (f) => f.arquivo.startsWith(estadoKey + "_") && f.arquivo.includes(recentFile.date),
     );
-    // Fallback: any file from this state (right state, any date)
-    const stateFontes = fontes.filter((f) => f.arquivo.startsWith(estadoKey + "_"));
+    // Fallback: any file from this state, prefer those with a proper YYYYMMDD date, newest first
+    const stateFontes = fontes
+      .filter((f) => f.arquivo.startsWith(estadoKey + "_"))
+      .sort((a, b) => {
+        const da = a.arquivo.match(/_(\d{8})/)?.[1] ?? "";
+        const db = b.arquivo.match(/_(\d{8})/)?.[1] ?? "";
+        return db.localeCompare(da);
+      });
     const fontesParaSalvar = recentFontes.length > 0
       ? recentFontes
       : stateFontes.length > 0
