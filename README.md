@@ -11,6 +11,66 @@ Ferramenta de investigação de diários oficiais estaduais do Nordeste brasilei
 5. **Análise agendada:** Um job diário dispara análises para todos os monitores ativos conforme sua frequência configurada (`daily` ou `weekly`)
 6. **Consulta:** A API responde perguntas em linguagem natural, usando o contexto de monitoramento configurado pelo frontend
 
+## Arquitetura
+
+```mermaid
+flowchart TD
+    subgraph GH["GitHub Actions"]
+        W1["hourly_scraper.yml\n(every hour, weekdays)"]
+        W2["daily_analyses.yml\n(09:00 UTC, weekdays)"]
+    end
+
+    subgraph SCRAPER["Scraper Project\n(Supabase)"]
+        ST[("Storage\ndiarios-oficiais")]
+        DB[("diarios table")]
+    end
+
+    subgraph OPENAI["OpenAI"]
+        FILES["Files API"]
+        VS[("Vector Store")]
+    end
+
+    subgraph MONITOR["Monitor Project\n(Supabase)"]
+        MON[("monitores table")]
+        ANA[("analises table")]
+        FN_ANALYZE["analyze\nedge function"]
+        FN_CHAT["chat\nedge function"]
+    end
+
+    SITES["State websites\n(9 states — NE Brazil)"]
+    FE["Frontend"]
+
+    W1 --> SCRAPER_TS["pdfs_scraper.ts"]
+    W2 --> TRIGGER_TS["trigger_analyses.ts"]
+
+    SCRAPER_TS -->|"scrape PDFs"| SITES
+    SCRAPER_TS -->|"upload PDF"| ST
+    SCRAPER_TS -->|"insert metadata"| DB
+    SCRAPER_TS -->|"upload file"| FILES
+    FILES -->|"add to store"| VS
+    SCRAPER_TS -->|"new diario found?\nquery active monitors"| MON
+    MON -->|"monitors for state"| SCRAPER_TS
+    SCRAPER_TS -->|"POST /analyze\nper monitor"| FN_ANALYZE
+
+    TRIGGER_TS -->|"query active monitors\n(daily / weekly on Mon)"| MON
+    MON -->|"monitors to run"| TRIGGER_TS
+    TRIGGER_TS -->|"POST /analyze\nper monitor"| FN_ANALYZE
+
+    FN_ANALYZE -->|"find most recent file"| VS
+    FN_ANALYZE -->|"search vector store"| VS
+    VS -->|"response + sources"| FN_ANALYZE
+    FN_ANALYZE -->|"get storage_url"| DB
+    FN_ANALYZE -->|"insert analysis"| ANA
+
+    FE -->|"POST /chat"| FN_CHAT
+    FN_CHAT -->|"search vector store"| VS
+    VS -->|"response + sources"| FN_CHAT
+    FN_CHAT -->|"response"| FE
+
+    FE -->|"create monitor\n(webhook → INSERT)"| MON
+    MON -->|"DB webhook"| FN_ANALYZE
+```
+
 ## Pré-requisitos
 
 - Deno 2.x
