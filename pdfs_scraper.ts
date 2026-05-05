@@ -466,6 +466,8 @@ async function saveToSupabase(
 async function sendToVectorStore(
   localPath: string,
   fileName: string,
+  estado: string,
+  datePub: string,
 ): Promise<void> {
   if (!openai || !VECTOR_STORE_ID) {
     console.log(
@@ -481,11 +483,14 @@ async function sendToVectorStore(
       file,
       purpose: "assistants",
     });
-    await openai.vectorStores.fileBatches.createAndPoll(VECTOR_STORE_ID, {
-      file_ids: [uploaded.id],
+    // Add file to vector store with estado/date attributes for filtered search
+    // deno-lint-ignore no-explicit-any
+    await (openai.vectorStores.files as any).create(VECTOR_STORE_ID, {
+      file_id: uploaded.id,
+      attributes: { estado, date: datePub },
     });
     console.log(
-      `  ↑ OpenAI Vector Store: ${fileName} (file_id=${uploaded.id})`,
+      `  ↑ OpenAI Vector Store: ${fileName} (file_id=${uploaded.id}, estado=${estado})`,
     );
   } catch (e) {
     console.error(`  Erro ao enviar para OpenAI (${fileName}): ${e}`);
@@ -501,7 +506,7 @@ async function triggerAnalysisForStates(states: Set<string>): Promise<void> {
   }
   if (states.size === 0) return;
 
-  const analyzeUrl = `${SUPABASE_URL}/functions/v1/analyze`;
+  const analyzeUrl = `${MONITOR_SUPABASE_URL}/functions/v1/analyze`;
   console.log(`\n=== DISPARANDO ANÁLISES para ${states.size} estado(s) ===`);
 
   for (const estado of states) {
@@ -531,7 +536,7 @@ async function triggerAnalysisForStates(states: Set<string>): Promise<void> {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${SUPABASE_KEY}`,
+            "Authorization": `Bearer ${MONITOR_SUPABASE_KEY}`,
           },
           body: JSON.stringify({ record: monitor }),
           signal: AbortSignal.timeout(180_000),
@@ -643,7 +648,7 @@ async function main() {
         continue;
       }
 
-      await sendToVectorStore(finalPath, fileName);
+      await sendToVectorStore(finalPath, fileName, estado, date);
 
       totalDownloaded++;
       stateCount++;

@@ -1,7 +1,7 @@
 #!/bin/bash
-# Daily cron wrapper for pdfs_scraper.ts
+# Hourly cron wrapper for pdfs_scraper.ts (weekdays, 6am–20pm)
 # Add to crontab with: crontab -e
-#   0 6 * * 1-5 /Users/victorgois/Repositories/tatu/run_scraper.sh >> /Users/victorgois/Repositories/tatu/logs/scraper.log 2>&1
+#   0 6-20 * * 1-5 /Users/victorgois/Repositories/tatu/run_scraper.sh >> /Users/victorgois/Repositories/tatu/logs/scraper.log 2>&1
 
 set -e
 

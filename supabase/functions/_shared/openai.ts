@@ -16,7 +16,7 @@ function normalizeEstado(nome: string): string {
 
 export async function getMostRecentFileId(
   estadoNome: string,
-): Promise<{ id: string; date: string } | null> {
+): Promise<{ id: string; date: string; filename: string } | null> {
   const vectorStoreId = Deno.env.get("VECTOR_STORE_ID")!;
 
   const vsFiles = await openai.vectorStores.files.list(vectorStoreId, { limit: 100 });
@@ -30,7 +30,7 @@ export async function getMostRecentFileId(
     .map((f) => {
       const dateMatch = f.filename.match(/_(\d{8})/);
       const date = dateMatch ? dateMatch[1] : "";
-      return { id: f.id, date };
+      return { id: f.id, date, filename: f.filename };
     })
     .sort((a, b) => b.date.localeCompare(a.date));
 
@@ -40,15 +40,23 @@ export async function getMostRecentFileId(
 export async function searchVectorStore(
   pergunta: string,
   instructions: string,
+  filters?: Record<string, unknown>,
 ): Promise<{ resposta: string; fontes: { arquivo: string }[]; model: string }> {
   const vectorStoreId = Deno.env.get("VECTOR_STORE_ID")!;
   const model = Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini";
+
+  // deno-lint-ignore no-explicit-any
+  const fileSearchTool: any = {
+    type: "file_search",
+    vector_store_ids: [vectorStoreId],
+    ...(filters ? { filters } : {}),
+  };
 
   const response = await openai.responses.create({
     model,
     instructions,
     input: pergunta,
-    tools: [{ type: "file_search", vector_store_ids: [vectorStoreId] } as Parameters<typeof openai.responses.create>[0]["tools"][0]],
+    tools: [fileSearchTool],
     include: ["file_search_call.results"] as string[],
   } as Parameters<typeof openai.responses.create>[0]);
 
@@ -56,7 +64,9 @@ export async function searchVectorStore(
   const fontes: { arquivo: string }[] = [];
   const seenFiles = new Set<string>();
 
-  for (const item of response.output) {
+  const output = "output" in response ? response.output : [];
+
+  for (const item of output) {
     // file_search_call results contain the actual retrieved files
     if ((item as { type: string }).type === "file_search_call") {
       const call = item as { type: string; results?: { filename?: string; file_id?: string }[] };
