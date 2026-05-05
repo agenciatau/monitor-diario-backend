@@ -58,7 +58,16 @@ async function uploadFileToOpenAI(estado: string, fileName: string): Promise<str
 
   const file = new File([data], fileName, { type: "application/pdf" });
   const uploaded = await openai.files.create({ file, purpose: "assistants" });
-  console.log(`  ^ Uploaded to OpenAI: ${fileName} (${uploaded.id})`);
+
+  // Add to vector store with attributes for filtered search
+  const dateMatch = fileName.match(/_(\d{8})/);
+  const date = dateMatch ? dateMatch[1] : "";
+  // deno-lint-ignore no-explicit-any
+  await (openai.vectorStores.files as any).create(VECTOR_STORE_ID, {
+    file_id: uploaded.id,
+    attributes: { estado, date },
+  });
+  console.log(`  ^ Uploaded to OpenAI: ${fileName} (${uploaded.id}, estado=${estado})`);
   return uploaded.id;
 }
 
@@ -89,16 +98,7 @@ async function main() {
   );
   const fileIds = (await pLimit(tasks, CONCURRENCY)).filter((id): id is string => id !== null);
 
-  console.log(`\n${fileIds.length}/${missing.length} uploaded. Adding to vector store in one batch...`);
-
-  const BATCH_SIZE = 500;
-  for (let i = 0; i < fileIds.length; i += BATCH_SIZE) {
-    const batch = fileIds.slice(i, i + BATCH_SIZE);
-    console.log(`  Creating batch ${Math.floor(i / BATCH_SIZE) + 1} (${batch.length} files)...`);
-    await openai.vectorStores.fileBatches.createAndPoll(VECTOR_STORE_ID, { file_ids: batch });
-    console.log(`  Batch done.`);
-  }
-
+  console.log(`\n${fileIds.length}/${missing.length} uploaded and added to vector store with attributes.`);
   console.log("\nSync complete.");
 }
 

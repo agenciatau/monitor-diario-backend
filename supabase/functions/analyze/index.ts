@@ -81,33 +81,27 @@ Deno.serve(async (req) => {
     }
 
     const dataFormatada = `${recentFile.date.slice(6, 8)}/${recentFile.date.slice(4, 6)}/${recentFile.date.slice(0, 4)}`;
+    const estadoKey = UF_TO_ESTADO[uf] ?? uf.toLowerCase();
 
     const pergunta =
       `Analise o PDF do Diário Oficial de ${estadoNome} (${uf}), do dia ${dataFormatada}, ` +
+      `arquivo "${recentFile.filename}", ` +
       `e identifique SOMENTE informações realmente relevantes relacionadas ao tema e palavras-chave definidos nas instruções.`;
 
-    const { resposta, fontes, model } = await searchVectorStore(pergunta, instructions);
+    // Filter vector store search to only this state's files
+    const filters = {
+      type: "eq" as const,
+      key: "estado",
+      value: estadoKey,
+    };
+
+    const { resposta, fontes, model } = await searchVectorStore(pergunta, instructions, filters);
     console.log(`[analyze] fontes brutas: ${JSON.stringify(fontes)}`);
 
-    const estadoKey = UF_TO_ESTADO[uf] ?? uf.toLowerCase();
-
-    // Filter by both state prefix AND date — prevents cross-state contamination
-    const recentFontes = fontes.filter(
-      (f) => f.arquivo.startsWith(estadoKey + "_") && f.arquivo.includes(recentFile.date),
+    // Keep only sources from the correct state (safety net)
+    const fontesParaSalvar = fontes.filter(
+      (f) => f.arquivo.startsWith(estadoKey + "_"),
     );
-    // Fallback: any file from this state, prefer those with a proper YYYYMMDD date, newest first
-    const stateFontes = fontes
-      .filter((f) => f.arquivo.startsWith(estadoKey + "_"))
-      .sort((a, b) => {
-        const da = a.arquivo.match(/_(\d{8})/)?.[1] ?? "";
-        const db = b.arquivo.match(/_(\d{8})/)?.[1] ?? "";
-        return db.localeCompare(da);
-      });
-    const fontesParaSalvar = recentFontes.length > 0
-      ? recentFontes
-      : stateFontes.length > 0
-      ? stateFontes.slice(0, 1)
-      : fontes.slice(0, 1); // last resort: keep first result even if wrong state
     console.log(`[analyze] fontes filtradas: ${JSON.stringify(fontesParaSalvar)}, resposta length=${resposta.length}`);
 
     if (fontesParaSalvar.length === 0) {
