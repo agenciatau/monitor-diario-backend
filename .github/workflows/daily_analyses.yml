@@ -20,5 +20,5 @@ jobs:
       - name: Run analyses
         env:
           MONITOR_SUPABASE_URL: ${{ secrets.MONITOR_SUPABASE_URL }}
-          MONITOR_SUPABASE_KEY: ${{ secrets.MONITOR_SUPABASE_KEY }}
+          MONITOR_SUPABASE_KEY: ${{ secrets.MONITOR_SUPABASE_SERVICE_KEY }}
         run: deno run --allow-net --allow-read --allow-env trigger_analyses.ts
