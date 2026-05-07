@@ -5,21 +5,14 @@
  *   deno run --allow-net --allow-read --allow-write --allow-env pdfs_scraper.ts
  *
  * Strategies:
- *   'scrape'          – parses HTML listing page for <a href="*.pdf"> links
  *   'date_pattern'    – generates URLs based on recent business days
  *   'date_pattern_pt' – date_pattern with Portuguese month names (Paraíba)
- *   'id_range'        – generates URLs based on incremental IDs (most recent first)
+ *   'json_api'        – POST to DataTables JSON endpoint
  *
- * Updated URLs per state (2026-03):
- *   AL  scrape    https://diario.imprensaoficial.al.gov.br/
- *   BA  scrape    https://dool.egba.ba.gov.br/             (updated from egbanet)
- *   CE  scrape    http://pesquisa.doe.seplag.ce.gov.br/doepesquisa/sead.do?page=ultimasEdicoes
- *   MA  date      https://www.diariooficial.ma.gov.br/download.php?arqv=1&arq={date}
- *   PB  date_pt   https://auniao.pb.gov.br/servicos/doe/…  (predictable by date, no scraping needed)
+ * Active states:
+ *   PB  date_pt   https://auniao.pb.gov.br/servicos/doe/…  (predictable by date)
  *   PE  date      https://cepebr-prod.s3.amazonaws.com/1/cadernos/…  (public S3)
- *   PI  scrape    https://www.diario.pi.gov.br/doe/busca   (React SPA — may fail)
- *   RN  date      https://webdisk.diariooficial.rn.gov.br/Jornal/1{YYYY-MM-DD}E.pdf  (updated)
- *   SE  scrape    https://iose.se.gov.br/diario-oficial
+ *   PI  json_api  https://www.diario.pi.gov.br/doe/Api/listardiarios.json
  */
 
 import "dotenv/config";
@@ -47,9 +40,7 @@ const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 const HEADERS = { "User-Agent": "Mozilla/5.0 (compatible; DiarioBot/1.0)" };
 
 const ESTADO_TO_UF: Record<string, string> = {
-  alagoas: "AL", bahia: "BA", ceara: "CE", maranhao: "MA",
   paraiba: "PB", pernambuco: "PE", piaui: "PI",
-  rio_grande_do_norte: "RN", sergipe: "SE",
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -71,31 +62,6 @@ interface SiteConfig {
 // ── Sites ──────────────────────────────────────────────────────────────────
 
 const sites: Record<string, SiteConfig> = {
-  alagoas: {
-    strategy: "scrape",
-    url_lista: "https://diario.imprensaoficial.al.gov.br/",
-    selector: 'a[href$=".pdf"]',
-  },
-  bahia: {
-    // DOOL — Diário Oficial On-Line (main state gazette)
-    // ⚠ dool.egba.ba.gov.br has a self-signed / unknown-issuer cert.
-    // Run with --unsafely-ignore-certificate-errors=dool.egba.ba.gov.br to enable.
-    strategy: "scrape",
-    url_lista: "https://dool.egba.ba.gov.br/",
-    selector: 'a[href$=".pdf"], a[href*="/download/"]',
-  },
-  ceara: {
-    strategy: "scrape",
-    url_lista:
-      "http://pesquisa.doe.seplag.ce.gov.br/doepesquisa/sead.do?page=ultimasEdicoes",
-    selector: 'a[href$=".pdf"]',
-  },
-  maranhao: {
-    strategy: "date_pattern",
-    url_pattern:
-      "https://www.diariooficial.ma.gov.br/download.php?arqv=1&arq={date}",
-    days_back: 15,
-  },
   paraiba: {
     // Direct date-based URLs — no scraping needed
     strategy: "date_pattern_pt",
@@ -113,18 +79,6 @@ const sites: Record<string, SiteConfig> = {
     strategy: "json_api",
     api_url: "https://www.diario.pi.gov.br/doe/Api/listardiarios.json",
     api_base_url: "https://www.diario.pi.gov.br/doe/",
-  },
-  rio_grande_do_norte: {
-    // Legacy DEI webdisk — predictable by ISO date (updated from old scrape URL)
-    strategy: "date_pattern",
-    url_pattern:
-      "https://webdisk.diariooficial.rn.gov.br/Jornal/1{year}-{month}-{day}E.pdf",
-    days_back: 15,
-  },
-  sergipe: {
-    strategy: "scrape",
-    url_lista: "https://iose.se.gov.br/diario-oficial",
-    selector: 'a[href$=".pdf"], a[href*="/download/"]',
   },
 };
 
@@ -559,7 +513,7 @@ async function triggerAnalysisForStates(states: Set<string>): Promise<void> {
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  const TARGET = 18; // ~2 PDFs per state × 9 states NE
+  const TARGET = 9; // ~3 PDFs per state × 3 states
   const MAX_PER_STATE = 3;
   const DOWNLOAD_DIR = "diarios_oficiais";
 
