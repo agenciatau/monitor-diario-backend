@@ -16,17 +16,12 @@ const MONITOR_SUPABASE_KEY = Deno.env.get("MONITOR_SUPABASE_KEY")!;
 
 const monitorSupabase = createClient(MONITOR_SUPABASE_URL, MONITOR_SUPABASE_KEY);
 
-const isMonday = new Date().getDay() === 1;
-const frequenciesToRun = ["daily", ...(isMonday ? ["weekly"] : [])];
-
 console.log(`Date: ${new Date().toISOString()}`);
-console.log(`Running frequencies: ${frequenciesToRun.join(", ")}`);
 
 const { data: monitors, error } = await monitorSupabase
   .from("monitores")
   .select("*")
-  .eq("is_active", true)
-  .in("frequency", frequenciesToRun);
+  .eq("is_active", true);
 
 if (error) throw new Error(`Failed to fetch monitors: ${error.message}`);
 
