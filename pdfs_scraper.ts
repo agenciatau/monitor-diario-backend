@@ -172,11 +172,32 @@ function extractDateFromHeaders(headers: Headers): string | null {
  * are not visible in raw bytes. Instead we check for /Font resource references
  * in the uncompressed object header section — any text-layer PDF must declare
  * at least one font. Image-only (scanned) PDFs have no /Font entries.
+ *
+ * We scan both the beginning and end of the file because large PDFs (e.g.
+ * government gazettes) may declare font resources beyond the first 128 KB.
  */
 function pdfHasText(data: Uint8Array): boolean {
-  // Scan first 128 KB — font resource declarations are in uncompressed headers
-  const sample = new TextDecoder("latin1").decode(data.slice(0, 131072));
-  return /\/Font\b/.test(sample);
+  const decoder = new TextDecoder("latin1");
+  const chunkSize = 262144; // 256 KB
+
+  // Scan the beginning
+  const head = decoder.decode(data.slice(0, chunkSize));
+  if (/\/Font\b/.test(head)) return true;
+
+  // Scan the end (covers cross-reference sections and late object definitions)
+  if (data.length > chunkSize) {
+    const tail = decoder.decode(data.slice(-chunkSize));
+    if (/\/Font\b/.test(tail)) return true;
+  }
+
+  // Scan a middle chunk for very large PDFs
+  if (data.length > chunkSize * 2) {
+    const mid = Math.floor(data.length / 2);
+    const middle = decoder.decode(data.slice(mid - chunkSize / 2, mid + chunkSize / 2));
+    if (/\/Font\b/.test(middle)) return true;
+  }
+
+  return false;
 }
 
 /**
