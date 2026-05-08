@@ -88,11 +88,13 @@ Deno.serve(async (req) => {
       `arquivo "${recentFile.filename}", ` +
       `e identifique SOMENTE informações realmente relevantes relacionadas ao tema e palavras-chave definidos nas instruções.`;
 
-    // Filter vector store search to only this state's files
+    // Filter vector store search to only this state's file for this specific date
     const filters = {
-      type: "eq" as const,
-      key: "estado",
-      value: estadoKey,
+      type: "and",
+      filters: [
+        { type: "eq", key: "estado", value: estadoKey },
+        { type: "eq", key: "date", value: recentFile.date },
+      ],
     };
 
     const { resposta, fontes, model } = await searchVectorStore(pergunta, instructions, filters);
