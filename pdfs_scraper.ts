@@ -102,6 +102,11 @@ function* recentBusinessDays(n: number): Generator<Date> {
   const d = new Date();
   let yielded = 0;
   let attempts = 0;
+  // Include today first if it's a weekday
+  if (d.getDay() !== 0 && d.getDay() !== 6) {
+    yield new Date(d);
+    yielded++;
+  }
   while (yielded < n && attempts < n * 3) {
     attempts++;
     d.setDate(d.getDate() - 1);
@@ -608,8 +613,15 @@ async function main() {
 
       totalDownloaded++;
       stateCount++;
-      statesWithNewDiarios.add(estado);
-      console.log(`  ✓ Salvo: ${fileName}  (${totalDownloaded}/${TARGET})`);
+
+      // Only trigger analysis for diários published today
+      const today = yyyymmdd(new Date());
+      if (date === today) {
+        statesWithNewDiarios.add(estado);
+        console.log(`  ✓ Salvo: ${fileName}  (${totalDownloaded}/${TARGET})`);
+      } else {
+        console.log(`  ✓ Salvo: ${fileName}  (${totalDownloaded}/${TARGET}) — análise não disparada (data ${date} ≠ hoje ${today})`);
+      }
 
       await sleep(1000);
     }
