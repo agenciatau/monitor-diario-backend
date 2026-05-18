@@ -102,33 +102,30 @@ export async function queryVectorStore(
 
 
 export async function generateResumo(resposta: string): Promise<string> {
-  const result = await openai.chat.completions.create({
+  const result = await openai.responses.create({
     model: "gpt-4o-mini",
-    messages: [{
-      role: "user",
-      content: `Resuma o seguinte texto em 2 a 3 frases curtas e diretas:\n\n${resposta.slice(0, 3000)}`,
-    }],
-    max_tokens: 150,
+    input: `Resuma o seguinte texto em 2 a 3 frases curtas e diretas:\n\n${resposta.slice(0, 3000)}`,
+    max_output_tokens: 150,
     temperature: 0,
   });
-  return result.choices[0].message.content?.trim() ?? "";
+  const text = result.output?.find((o: { type: string }) => o.type === "message")
+    ?.content?.find((c: { type: string }) => c.type === "output_text")?.text ?? "";
+  return text.trim();
 }
 
 export async function enrichWikidata(texto: string) {
   try {
-    const extraction = await openai.chat.completions.create({
+    const extraction = await openai.responses.create({
       model: "gpt-4o-mini",
-      messages: [{
-        role: "user",
-        content:
-          "Liste apenas os nomes de pessoas, empresas e organizações mencionadas neste texto. " +
-          "Máximo 5 itens, separados por vírgula, sem explicações adicionais. " +
-          `Se não houver nenhum, responda com uma string vazia.\n\n${texto.slice(0, 1500)}`,
-      }],
-      max_tokens: 80,
+      input:
+        "Liste apenas os nomes de pessoas, empresas e organizações mencionadas neste texto. " +
+        "Máximo 5 itens, separados por vírgula, sem explicações adicionais. " +
+        `Se não houver nenhum, responda com uma string vazia.\n\n${texto.slice(0, 1500)}`,
+      max_output_tokens: 80,
       temperature: 0,
     });
-    const raw = extraction.choices[0].message.content?.trim() ?? "";
+    const raw = extraction.output?.find((o: { type: string }) => o.type === "message")
+      ?.content?.find((c: { type: string }) => c.type === "output_text")?.text?.trim() ?? "";
     if (!raw) return [];
     const names = raw.split(",").map((n) => n.trim()).filter(Boolean);
     return enrichEntities(names);
