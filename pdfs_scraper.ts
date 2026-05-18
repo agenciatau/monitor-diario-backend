@@ -8,8 +8,10 @@
  *   'date_pattern'    – generates URLs based on recent business days
  *   'date_pattern_pt' – date_pattern with Portuguese month names (Paraíba)
  *   'json_api'        – POST to DataTables JSON endpoint
+ *   'json_api_get'    – GET JSON endpoint returning editions array (Alagoas)
  *
  * Active states:
+ *   AL  json_get  https://diario.imprensaoficial.al.gov.br/apinova/api/editions/published
  *   PB  date_pt   https://auniao.pb.gov.br/servicos/doe/…  (predictable by date)
  *   PE  date      https://cepebr-prod.s3.amazonaws.com/1/cadernos/…  (public S3)
  *   PI  json_api  https://www.diario.pi.gov.br/doe/Api/listardiarios.json
@@ -40,12 +42,12 @@ const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 const HEADERS = { "User-Agent": "Mozilla/5.0 (compatible; DiarioBot/1.0)" };
 
 const ESTADO_TO_UF: Record<string, string> = {
-  paraiba: "PB", pernambuco: "PE", piaui: "PI",
+  alagoas: "AL", paraiba: "PB", pernambuco: "PE", piaui: "PI",
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type Strategy = "scrape" | "date_pattern" | "date_pattern_pt" | "id_range" | "json_api";
+type Strategy = "scrape" | "date_pattern" | "date_pattern_pt" | "id_range" | "json_api" | "json_api_get";
 
 interface SiteConfig {
   strategy: Strategy;
@@ -62,6 +64,11 @@ interface SiteConfig {
 // ── Sites ──────────────────────────────────────────────────────────────────
 
 const sites: Record<string, SiteConfig> = {
+  alagoas: {
+    strategy: "json_api_get",
+    api_url: "https://diario.imprensaoficial.al.gov.br/apinova/api/editions/published?page=1",
+    api_base_url: "https://diario.imprensaoficial.al.gov.br/apinova/api/editions/downloadPdf/",
+  },
   paraiba: {
     // Direct date-based URLs — no scraping needed
     strategy: "date_pattern_pt",
@@ -310,6 +317,34 @@ async function collectJsonApiLinks(
   }
 }
 
+async function collectJsonApiGetLinks(
+  config: SiteConfig,
+): Promise<[string, string | null][]> {
+  const { api_url, api_base_url } = config;
+  try {
+    const resp = await fetch(api_url!, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const json = await resp.json();
+    const results: [string, string | null][] = [];
+    for (const edition of json.editions ?? []) {
+      const pubDateStr: string = edition.publication_date ?? "";
+      if (!pubDateStr) continue;
+      const pubDate = new Date(pubDateStr.replace("Z", "+00:00"));
+      if (isNaN(pubDate.getTime())) continue;
+      const date = yyyymmdd(pubDate);
+      const pdfUrl = `${api_base_url}${edition.id}`;
+      results.push([pdfUrl, date]);
+    }
+    return results;
+  } catch (e) {
+    console.error(`  Erro ao acessar API ${api_url}: ${e}`);
+    return [];
+  }
+}
+
 async function collectLinks(
   config: SiteConfig,
 ): Promise<[string, string | null][]> {
@@ -323,6 +358,9 @@ async function collectLinks(
   }
   if (strategy === "json_api") {
     return collectJsonApiLinks(config);
+  }
+  if (strategy === "json_api_get") {
+    return collectJsonApiGetLinks(config);
   }
   if (strategy === "id_range") {
     return generateIdRangeUrls(
@@ -520,7 +558,7 @@ async function triggerAnalysisForStates(states: Set<string>): Promise<void> {
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  const TARGET = 9; // ~3 PDFs per state × 3 states
+  const TARGET = 12; // ~3 PDFs per state × 4 states
   const MAX_PER_STATE = 3;
   const DOWNLOAD_DIR = "diarios_oficiais";
 
