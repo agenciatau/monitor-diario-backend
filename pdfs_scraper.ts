@@ -578,6 +578,7 @@ async function main() {
 
   // Shuffle states for variety
   const estados = Object.keys(sites).sort(() => Math.random() - 0.5);
+  console.log(`Estados: ${estados.join(", ")}`);
 
   for (const estado of estados) {
     if (totalDownloaded >= TARGET) break;
