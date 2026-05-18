@@ -85,9 +85,23 @@ Deno.serve(async (req) => {
     const brDate = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
     const todayStr = brDate.replace(/-/g, "");
     if (recentFile.date !== todayStr) {
-      console.log(`[analyze] Diário mais recente para ${estadoNome} é de ${recentFile.date}, mas hoje é ${todayStr}. Ignorando.`);
+      const msg = `Não há diário de ${estadoNome} disponível para a data de hoje. O mais recente encontrado é de ${recentFile.date.slice(6, 8)}/${recentFile.date.slice(4, 6)}/${recentFile.date.slice(0, 4)}.`;
+      console.log(`[analyze] ${msg}`);
+
+      const { error: insertError } = await monitorSupabase.from("analises").insert({
+        monitor_id: record.id ?? null,
+        uf,
+        resposta: `<p>${msg}</p>`,
+        fontes: [],
+        wikidata: [],
+        resumo: msg,
+        url_diario: null,
+        model: null,
+      });
+      if (insertError) console.error(`[analyze] insert error (no diário):`, JSON.stringify(insertError));
+
       return new Response(
-        JSON.stringify({ ignorado: `Não há diário de ${estadoNome} disponível para a data de hoje (${todayStr}). O mais recente é de ${recentFile.date}.` }),
+        JSON.stringify({ ignorado: msg }),
         { headers: { "Content-Type": "application/json" } },
       );
     }
