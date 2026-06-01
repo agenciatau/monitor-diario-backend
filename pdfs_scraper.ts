@@ -9,12 +9,19 @@
  *   'date_pattern_pt' – date_pattern with Portuguese month names (Paraíba)
  *   'json_api'        – POST to DataTables JSON endpoint
  *   'json_api_get'    – GET JSON endpoint returning editions array (Alagoas)
+ *   'bahia_dool'      – 2-step scrape: DOOL main page → ver-html → signed download URL
+ *   'scrape'          – scrape HTML listing page for PDF/download links
  *
- * Active states:
- *   AL  json_get  https://diario.imprensaoficial.al.gov.br/apinova/api/editions/published
- *   PB  date_pt   https://auniao.pb.gov.br/servicos/doe/…  (predictable by date)
- *   PE  date      https://cepebr-prod.s3.amazonaws.com/1/cadernos/…  (public S3)
- *   PI  json_api  https://www.diario.pi.gov.br/doe/Api/listardiarios.json
+ * Active states (Northeast Brazil):
+ *   AL  json_api_get  https://diario.imprensaoficial.al.gov.br/apinova/api/editions/published
+ *   BA  bahia_dool    https://dool.egba.ba.gov.br  (needs --unsafely-ignore-certificate-errors)
+ *   CE  scrape        http://pesquisa.doe.seplag.ce.gov.br/doepesquisa/…  (Brazil-only)
+ *   MA  date_pattern  https://diariooficial.ma.gov.br/download.php?arqv=1&arq=EX{date}
+ *   PB  date_pt       https://auniao.pb.gov.br/servicos/doe/…
+ *   PE  date_pattern  https://cepebr-prod.s3.amazonaws.com/1/cadernos/…  (public S3)
+ *   PI  json_api      https://www.diario.pi.gov.br/doe/Api/listardiarios.json
+ *   RN  date_pattern  https://webdisk.diariooficial.rn.gov.br/Jornal/1{year}-{month}-{day}.pdf
+ *   SE  scrape        https://iose.se.gov.br/diario-oficial
  */
 
 import "dotenv/config";
@@ -42,12 +49,14 @@ const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 const HEADERS = { "User-Agent": "Mozilla/5.0 (compatible; DiarioBot/1.0)" };
 
 const ESTADO_TO_UF: Record<string, string> = {
-  alagoas: "AL", paraiba: "PB", pernambuco: "PE", piaui: "PI",
+  alagoas: "AL", bahia: "BA", ceara: "CE", maranhao: "MA",
+  paraiba: "PB", pernambuco: "PE", piaui: "PI",
+  rio_grande_do_norte: "RN", sergipe: "SE",
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type Strategy = "scrape" | "date_pattern" | "date_pattern_pt" | "id_range" | "json_api" | "json_api_get";
+type Strategy = "scrape" | "date_pattern" | "date_pattern_pt" | "id_range" | "json_api" | "json_api_get" | "bahia_dool";
 
 interface SiteConfig {
   strategy: Strategy;
@@ -69,6 +78,23 @@ const sites: Record<string, SiteConfig> = {
     api_url: "https://diario.imprensaoficial.al.gov.br/apinova/api/editions/published?page=1",
     api_base_url: "https://diario.imprensaoficial.al.gov.br/apinova/api/editions/downloadPdf/",
   },
+  bahia: {
+    // DOOL (Diário Oficial On-Line) — 2-step scrape: main page → ver-html → signed download URL
+    // Note: SSL cert is bypassed via --unsafely-ignore-certificate-errors=dool.egba.ba.gov.br
+    strategy: "bahia_dool",
+  },
+  ceara: {
+    // SEPLAG listing — may only be reachable from Brazil (ECONNREFUSED from abroad)
+    strategy: "scrape",
+    url_lista: "http://pesquisa.doe.seplag.ce.gov.br/doepesquisa/sead.do?page=ultimasEdicoes&cmd=11&action=Ultimas",
+    selector: "a[href$='.pdf']",
+  },
+  maranhao: {
+    // DOEMA direct download by date — EX = Executivo caderno, arqv=1 = volume 1
+    strategy: "date_pattern",
+    url_pattern: "https://diariooficial.ma.gov.br/download.php?arqv=1&arq=EX{date}",
+    days_back: 15,
+  },
   paraiba: {
     // Direct date-based URLs — no scraping needed
     strategy: "date_pattern_pt",
@@ -86,6 +112,18 @@ const sites: Record<string, SiteConfig> = {
     strategy: "json_api",
     api_url: "https://www.diario.pi.gov.br/doe/Api/listardiarios.json",
     api_base_url: "https://www.diario.pi.gov.br/doe/",
+  },
+  rio_grande_do_norte: {
+    // Direct date-based URL — prefix "1" + 4-digit year + "-MM-DD"
+    strategy: "date_pattern",
+    url_pattern: "https://webdisk.diariooficial.rn.gov.br/Jornal/1{year}-{month}-{day}.pdf",
+    days_back: 15,
+  },
+  sergipe: {
+    // IOSE (Imprensa Oficial de Sergipe) — scrape listing for download links
+    strategy: "scrape",
+    url_lista: "https://iose.se.gov.br/diario-oficial",
+    selector: "a[href*='/portal/edicoes/download/']",
   },
 };
 
@@ -345,6 +383,85 @@ async function collectJsonApiGetLinks(
   }
 }
 
+/**
+ * Bahia DOOL — 2-step scrape.
+ * 1. Fetch main DOOL page to find recent ver-html/{ID} edition links.
+ * 2. For each edition page, extract the hash-signed download URL and date.
+ *
+ * SSL bypass is handled externally via:
+ *   --unsafely-ignore-certificate-errors=dool.egba.ba.gov.br
+ */
+async function collectBahiaDoolLinks(): Promise<[string, string | null][]> {
+  const baseUrl = "https://dool.egba.ba.gov.br";
+
+  // Step 1: Fetch DOOL main page to discover recent edition IDs
+  let listHtml: string;
+  try {
+    const resp = await fetch(`${baseUrl}/`, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    listHtml = await resp.text();
+  } catch (e) {
+    console.error(`  BA DOOL: Erro ao acessar página principal: ${e}`);
+    return [];
+  }
+
+  const $list = cheerio(listHtml);
+  const editionUrls: string[] = [];
+  $list("a").each((_, el) => {
+    const href = $list(el).attr("href") ?? "";
+    if (/\/ver-html\/\d+\//.test(href)) {
+      const absolute = new URL(href, baseUrl).href;
+      if (!editionUrls.includes(absolute)) editionUrls.push(absolute);
+    }
+  });
+
+  if (editionUrls.length === 0) {
+    console.error("  BA DOOL: Nenhum link ver-html encontrado na página principal");
+    return [];
+  }
+
+  const results: [string, string | null][] = [];
+
+  // Step 2: For each edition, get the hash-signed download URL
+  for (const editionUrl of editionUrls.slice(0, 5)) {
+    try {
+      const edResp = await fetch(editionUrl, {
+        headers: HEADERS,
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!edResp.ok) continue;
+      const edHtml = await edResp.text();
+      const $ed = cheerio(edHtml);
+
+      let downloadUrl: string | null = null;
+      $ed("a").each((_, el) => {
+        if (downloadUrl) return;
+        const href = $ed(el).attr("href") ?? "";
+        if (href.includes("web_api/edicoes/download") && href.includes("hash=")) {
+          downloadUrl = href.startsWith("http") ? href : new URL(href, baseUrl).href;
+        }
+      });
+
+      if (!downloadUrl) continue;
+
+      // Date is in the page title, e.g. "Diário Oficial do Estado da Bahia do dia 18/03/2025"
+      const titleText = $ed("title, h1, h2").first().text();
+      const brDate = titleText.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      const date = brDate ? `${brDate[3]}${brDate[2]}${brDate[1]}` : null;
+
+      results.push([downloadUrl, date]);
+    } catch (e) {
+      console.error(`  BA DOOL: Erro ao processar ${editionUrl}: ${e}`);
+    }
+    await sleep(500);
+  }
+
+  return results;
+}
+
 async function collectLinks(
   config: SiteConfig,
 ): Promise<[string, string | null][]> {
@@ -361,6 +478,9 @@ async function collectLinks(
   }
   if (strategy === "json_api_get") {
     return collectJsonApiGetLinks(config);
+  }
+  if (strategy === "bahia_dool") {
+    return collectBahiaDoolLinks();
   }
   if (strategy === "id_range") {
     return generateIdRangeUrls(
@@ -558,7 +678,7 @@ async function triggerAnalysisForStates(states: Set<string>): Promise<void> {
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  const TARGET = 12; // ~3 PDFs per state × 4 states
+  const TARGET = 27; // ~3 PDFs per state × 9 states
   const MAX_PER_STATE = 3;
   const DOWNLOAD_DIR = "diarios_oficiais";
 
