@@ -384,82 +384,49 @@ async function collectJsonApiGetLinks(
 }
 
 /**
- * Bahia DOOL — 2-step scrape.
- * 1. Fetch main DOOL page to find recent ver-html/{ID} edition links.
- * 2. For each edition page, extract the hash-signed download URL and date.
+ * Bahia DOOL — fetch recent editions via public JSON API, build download URLs.
+ *
+ * The public endpoint /apifront/portal/edicoes/ultimas_edicoes.json returns
+ * recent edition IDs and dates without authentication.
+ *
+ * The legacy /web_api/edicoes/download/{ID}?hash=...&hash_date=... endpoint
+ * serves PDFs publicly; the hash parameter is no longer validated server-side
+ * (legacy bypass — any fixed hash/date value works).
  *
  * SSL bypass is handled externally via:
  *   --unsafely-ignore-certificate-errors=dool.egba.ba.gov.br
  */
 async function collectBahiaDoolLinks(): Promise<[string, string | null][]> {
   const baseUrl = "https://dool.egba.ba.gov.br";
+  // Legacy hash params — server no longer validates these
+  const LEGACY_HASH = "5094ed62b9b84af21a14e8fc2353079934637ab6";
+  const LEGACY_DATE = "2022-01-12T10:00:05-0300";
 
-  // Step 1: Fetch DOOL main page to discover recent edition IDs
-  let listHtml: string;
   try {
-    const resp = await fetch(`${baseUrl}/`, {
+    const resp = await fetch(`${baseUrl}/apifront/portal/edicoes/ultimas_edicoes.json`, {
       headers: HEADERS,
       signal: AbortSignal.timeout(15_000),
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    listHtml = await resp.text();
+    const json = await resp.json();
+
+    const results: [string, string | null][] = [];
+    for (const item of json.itens ?? []) {
+      const id: string = item.id ?? "";
+      const rawDate: string = item.data ?? ""; // "DD/MM/YYYY"
+      if (!id) continue;
+
+      const dateParts = rawDate.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      const date = dateParts ? `${dateParts[3]}${dateParts[2]}${dateParts[1]}` : null;
+
+      const url = `${baseUrl}/web_api/edicoes/download/${id}?hash=${LEGACY_HASH}&hash_date=${encodeURIComponent(LEGACY_DATE)}`;
+      results.push([url, date]);
+    }
+    return results;
   } catch (e) {
-    console.error(`  BA DOOL: Erro ao acessar página principal: ${e}`);
+    console.error(`  BA DOOL: Erro ao acessar ultimas_edicoes.json: ${e}`);
     return [];
   }
-
-  const $list = cheerio(listHtml);
-  const editionUrls: string[] = [];
-  $list("a").each((_, el) => {
-    const href = $list(el).attr("href") ?? "";
-    if (/\/ver-html\/\d+\//.test(href)) {
-      const absolute = new URL(href, baseUrl).href;
-      if (!editionUrls.includes(absolute)) editionUrls.push(absolute);
-    }
-  });
-
-  if (editionUrls.length === 0) {
-    console.error("  BA DOOL: Nenhum link ver-html encontrado na página principal");
-    return [];
-  }
-
-  const results: [string, string | null][] = [];
-
-  // Step 2: For each edition, get the hash-signed download URL
-  for (const editionUrl of editionUrls.slice(0, 5)) {
-    try {
-      const edResp = await fetch(editionUrl, {
-        headers: HEADERS,
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!edResp.ok) continue;
-      const edHtml = await edResp.text();
-      const $ed = cheerio(edHtml);
-
-      let downloadUrl: string | null = null;
-      $ed("a").each((_, el) => {
-        if (downloadUrl) return;
-        const href = $ed(el).attr("href") ?? "";
-        if (href.includes("web_api/edicoes/download") && href.includes("hash=")) {
-          downloadUrl = href.startsWith("http") ? href : new URL(href, baseUrl).href;
-        }
-      });
-
-      if (!downloadUrl) continue;
-
-      // Date is in the page title, e.g. "Diário Oficial do Estado da Bahia do dia 18/03/2025"
-      const titleText = $ed("title, h1, h2").first().text();
-      const brDate = titleText.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-      const date = brDate ? `${brDate[3]}${brDate[2]}${brDate[1]}` : null;
-
-      results.push([downloadUrl, date]);
-    } catch (e) {
-      console.error(`  BA DOOL: Erro ao processar ${editionUrl}: ${e}`);
-    }
-    await sleep(500);
-  }
-
-  return results;
 }
 
 async function collectLinks(
