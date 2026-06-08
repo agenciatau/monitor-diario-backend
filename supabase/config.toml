@@ -12,3 +12,7 @@ import_map = "./functions/deno.json"
 [functions.analyze]
 verify_jwt = false
 import_map = "./functions/deno.json"
+
+[functions.send-email]
+verify_jwt = false
+import_map = "./functions/deno.json"

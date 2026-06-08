@@ -97,6 +97,7 @@ Deno.serve(async (req) => {
         resumo: msg,
         url_diario: null,
         model: null,
+        hasAnalysis: false,
       });
       if (insertError) console.error(`[analyze] insert error (no diário):`, JSON.stringify(insertError));
 
@@ -184,6 +185,7 @@ Deno.serve(async (req) => {
       resumo,
       url_diario,
       model,
+      hasAnalysis: true,
     });
 
     if (insertError) {
