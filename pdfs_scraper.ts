@@ -499,7 +499,7 @@ async function downloadPdf(
     const resp = await fetch(url, {
       headers: HEADERS,
       redirect: "follow",
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(120_000),
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = new Uint8Array(await resp.arrayBuffer());
