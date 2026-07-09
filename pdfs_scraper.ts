@@ -9,19 +9,19 @@
  *   'date_pattern_pt' – date_pattern with Portuguese month names (Paraíba)
  *   'json_api'        – POST to DataTables JSON endpoint
  *   'json_api_get'    – GET JSON endpoint returning editions array (Alagoas)
- *   'bahia_dool'      – 2-step scrape: DOOL main page → ver-html → signed download URL
+ *   'dool'            – DOOL platform: public JSON edition list + legacy-hash download
  *   'scrape'          – scrape HTML listing page for PDF/download links
  *
  * Active states (Northeast Brazil):
  *   AL  json_api_get  https://diario.imprensaoficial.al.gov.br/apinova/api/editions/published
- *   BA  bahia_dool    https://dool.egba.ba.gov.br  (needs --unsafely-ignore-certificate-errors)
- *   CE  scrape        http://pesquisa.doe.seplag.ce.gov.br/doepesquisa/…  (Brazil-only)
+ *   BA  dool          https://dool.egba.ba.gov.br  (needs --unsafely-ignore-certificate-errors)
+ *   CE  date_pattern  http://imagens.seplag.ce.gov.br/PDF/{date}/do{date}p01.pdf
  *   MA  date_pattern  https://diariooficial.ma.gov.br/download.php?arqv=1&arq=EX{date}
  *   PB  date_pt       https://auniao.pb.gov.br/servicos/doe/…
- *   PE  date_pattern  https://cepebr-prod.s3.amazonaws.com/1/cadernos/…  (public S3)
+ *   PE  (unavailable) CEPE portal is login-gated; former public S3 bucket now private
  *   PI  json_api      https://www.diario.pi.gov.br/doe/Api/listardiarios.json
  *   RN  date_pattern  https://webdisk.diariooficial.rn.gov.br/Jornal/1{year}-{month}-{day}.pdf
- *   SE  scrape        https://iose.se.gov.br/diario-oficial
+ *   SE  dool          https://iose.se.gov.br  (valid TLS, no bypass)
  */
 
 import "dotenv/config";
@@ -56,7 +56,7 @@ const ESTADO_TO_UF: Record<string, string> = {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type Strategy = "scrape" | "date_pattern" | "date_pattern_pt" | "id_range" | "json_api" | "json_api_get" | "bahia_dool";
+type Strategy = "scrape" | "date_pattern" | "date_pattern_pt" | "id_range" | "json_api" | "json_api_get" | "dool";
 
 interface SiteConfig {
   strategy: Strategy;
@@ -68,6 +68,7 @@ interface SiteConfig {
   id_count?: number;
   api_url?: string;
   api_base_url?: string;
+  base_url?: string;
 }
 
 // ── Sites ──────────────────────────────────────────────────────────────────
@@ -79,15 +80,16 @@ const sites: Record<string, SiteConfig> = {
     api_base_url: "https://diario.imprensaoficial.al.gov.br/apinova/api/editions/downloadPdf/",
   },
   bahia: {
-    // DOOL (Diário Oficial On-Line) — 2-step scrape: main page → ver-html → signed download URL
+    // DOOL platform — public JSON edition list + legacy-hash download endpoint.
     // Note: SSL cert is bypassed via --unsafely-ignore-certificate-errors=dool.egba.ba.gov.br
-    strategy: "bahia_dool",
+    strategy: "dool",
+    base_url: "https://dool.egba.ba.gov.br",
   },
   ceara: {
-    // SEPLAG listing — may only be reachable from Brazil (ECONNREFUSED from abroad)
-    strategy: "scrape",
-    url_lista: "http://pesquisa.doe.seplag.ce.gov.br/doepesquisa/sead.do?page=ultimasEdicoes&cmd=11&action=Ultimas",
-    selector: "a[href$='.pdf']",
+    // Direct date-based URL — imagens.seplag.ce.gov.br serves PDFs by date
+    strategy: "date_pattern",
+    url_pattern: "http://imagens.seplag.ce.gov.br/PDF/{date}/do{date}p01.pdf",
+    days_back: 15,
   },
   maranhao: {
     // DOEMA direct download by date — EX = Executivo caderno, arqv=1 = volume 1
@@ -120,10 +122,10 @@ const sites: Record<string, SiteConfig> = {
     days_back: 15,
   },
   sergipe: {
-    // IOSE (Imprensa Oficial de Sergipe) — scrape listing for download links
-    strategy: "scrape",
-    url_lista: "https://iose.se.gov.br/diario-oficial",
-    selector: "a[href*='/portal/edicoes/download/']",
+    // IOSE (Imprensa Oficial de Sergipe) — same DOOL platform as Bahia:
+    // public JSON edition list + legacy-hash download endpoint. Valid TLS, no bypass needed.
+    strategy: "dool",
+    base_url: "https://iose.se.gov.br",
   },
 };
 
@@ -384,7 +386,8 @@ async function collectJsonApiGetLinks(
 }
 
 /**
- * Bahia DOOL — fetch recent editions via public JSON API, build download URLs.
+ * DOOL platform (Bahia EGBA, Sergipe IOSE) — fetch recent editions via public
+ * JSON API and build download URLs.
  *
  * The public endpoint /apifront/portal/edicoes/ultimas_edicoes.json returns
  * recent edition IDs and dates without authentication.
@@ -393,11 +396,14 @@ async function collectJsonApiGetLinks(
  * serves PDFs publicly; the hash parameter is no longer validated server-side
  * (legacy bypass — any fixed hash/date value works).
  *
- * SSL bypass is handled externally via:
+ * Bahia (dool.egba.ba.gov.br) needs an external SSL bypass:
  *   --unsafely-ignore-certificate-errors=dool.egba.ba.gov.br
+ * Sergipe (iose.se.gov.br) has a valid certificate and needs no bypass.
  */
-async function collectBahiaDoolLinks(): Promise<[string, string | null][]> {
-  const baseUrl = "https://dool.egba.ba.gov.br";
+async function collectDoolLinks(
+  config: SiteConfig,
+): Promise<[string, string | null][]> {
+  const baseUrl = config.base_url!;
   // Legacy hash params — server no longer validates these
   const LEGACY_HASH = "5094ed62b9b84af21a14e8fc2353079934637ab6";
   const LEGACY_DATE = "2022-01-12T10:00:05-0300";
@@ -424,7 +430,7 @@ async function collectBahiaDoolLinks(): Promise<[string, string | null][]> {
     }
     return results;
   } catch (e) {
-    console.error(`  BA DOOL: Erro ao acessar ultimas_edicoes.json: ${e}`);
+    console.error(`  DOOL (${baseUrl}): Erro ao acessar ultimas_edicoes.json: ${e}`);
     return [];
   }
 }
@@ -446,8 +452,8 @@ async function collectLinks(
   if (strategy === "json_api_get") {
     return collectJsonApiGetLinks(config);
   }
-  if (strategy === "bahia_dool") {
-    return collectBahiaDoolLinks();
+  if (strategy === "dool") {
+    return collectDoolLinks(config);
   }
   if (strategy === "id_range") {
     return generateIdRangeUrls(
