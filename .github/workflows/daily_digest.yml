@@ -1,0 +1,22 @@
+name: Daily Digest
+
+on:
+  schedule:
+    - cron: '0 23 * * 1-5'  # 23:00 UTC (20:00 BRT), weekdays
+  workflow_dispatch:
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger daily digest
+        env:
+          MONITOR_SUPABASE_URL: ${{ secrets.MONITOR_SUPABASE_URL }}
+          MONITOR_SUPABASE_KEY: ${{ secrets.MONITOR_SUPABASE_SERVICE_KEY }}
+        run: |
+          curl --fail-with-body -X POST \
+            "$MONITOR_SUPABASE_URL/functions/v1/daily-digest" \
+            -H "Authorization: Bearer $MONITOR_SUPABASE_KEY" \
+            -H "Content-Type: application/json"

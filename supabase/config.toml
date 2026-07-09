@@ -16,3 +16,7 @@ import_map = "./functions/deno.json"
 [functions.send-email]
 verify_jwt = false
 import_map = "./functions/deno.json"
+
+[functions.daily-digest]
+verify_jwt = false
+import_map = "./functions/deno.json"
