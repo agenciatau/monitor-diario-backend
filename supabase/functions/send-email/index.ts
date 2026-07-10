@@ -58,79 +58,146 @@ function buildConfirmUrl(emailData: HookPayload["email_data"]): string {
 }
 
 
-function signupTemplate(email: string, confirmUrl: string): { subject: string; html: string } {
+function signupTemplate(confirmUrl: string): { subject: string; html: string } {
   return {
-    subject: "Confirme seu cadastro no Monitor Diário",
+    subject: "Confirme seu E-mail | Monitor Diário",
     html: `
 <!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:40px 0">
-    <tr><td align="center">
-      <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-        <tr><td style="background:#1a1a2e;padding:28px 40px">
-          <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700">Monitor Diário</h1>
-        </td></tr>
-        <tr><td style="padding:40px">
-          <h2 style="margin:0 0 16px;font-size:20px;color:#111">Bem-vindo(a)!</h2>
-          <p style="margin:0 0 24px;color:#555;line-height:1.6">
-            Recebemos seu cadastro com o e-mail <strong>${email}</strong>.<br>
-            Clique no botão abaixo para confirmar sua conta e começar a monitorar os Diários Oficiais.
-          </p>
-          <a href="${confirmUrl}" style="display:inline-block;background:#1a1a2e;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:700;font-size:15px">
-            Confirmar cadastro
-          </a>
-          <p style="margin:24px 0 0;color:#888;font-size:13px;line-height:1.5">
-            Se você não criou uma conta, ignore este e-mail.<br>
-            O link expira em 24 horas.
-          </p>
-        </td></tr>
-        <tr><td style="padding:20px 40px;border-top:1px solid #eee;text-align:center">
-          <p style="margin:0;color:#aaa;font-size:12px">Monitor Diário &mdash; monitordiario.com.br</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Confirme seu cadastro</title>
+</head>
+<body style="margin:0; padding:0; background:#f4f6f8; font-family: Arial, Helvetica, sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+<tr>
+<td align="center">
+<table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 4px 10px rgba(0,0,0,0.05);">
+<!-- HEADER -->
+<tr>
+<td align="center" style="padding:30px 20px;background:#ffffff;border-bottom:1px solid #eeeeee;">
+<img src="https://monitordiario.com.br/imagens/logo-monitor-diario.png" alt="Monitor Diário" style="max-width:180px;">
+</td>
+</tr>
+<!-- CONTENT -->
+<tr>
+<td style="padding:40px 40px 30px 40px;color:#333333;font-size:16px;line-height:1.6;">
+<h2 style="margin-top:0;color:#222;font-size:22px;">
+Confirme seu cadastro no Monitor Diário
+</h2>
+<p>Olá! 👋</p>
+<p>
+Recebemos uma solicitação para criar uma conta na plataforma
+<strong>Monitor Diário</strong>.
+</p>
+<p style="text-align:center;margin:35px 0;">
+<a href="${confirmUrl}"
+style="
+background:#00b871;
+color:#ffffff;
+padding:14px 28px;
+text-decoration:none;
+border-radius:6px;
+font-weight:bold;
+display:inline-block;
+font-size:16px;
+">
+Confirmar meu cadastro
+</a>
+</p>
+<p style="font-size:14px;color:#666;">
+Se o botão não funcionar, copie e cole o link abaixo no seu navegador:
+</p>
+<p style="font-size:14px;word-break:break-all;color:#00b871;">
+${confirmUrl}
+</p>
+<p style="margin-top:30px;">
+Caso você não solicitou esse cadastro, pode ignorar este email com segurança.
+</p>
+</td>
+</tr>
+<!-- FOOTER -->
+<tr>
+<td style="background:#f7f7f7;padding:20px 30px;font-size:13px;color:#777;text-align:center;">
+<p style="margin:0 0 8px 0;">Monitor Diário</p>
+<p style="margin:0;">Ferramenta para monitoramento de Diários Oficiais</p>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
 </body>
 </html>`,
   };
 }
 
-function recoveryTemplate(email: string, confirmUrl: string): { subject: string; html: string } {
+function recoveryTemplate(confirmUrl: string): { subject: string; html: string } {
   return {
-    subject: "Redefina sua senha no Monitor Diário",
+    subject: "Redefinir senha | Monitor Diário",
     html: `
 <!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:40px 0">
-    <tr><td align="center">
-      <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-        <tr><td style="background:#1a1a2e;padding:28px 40px">
-          <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700">Monitor Diário</h1>
-        </td></tr>
-        <tr><td style="padding:40px">
-          <h2 style="margin:0 0 16px;font-size:20px;color:#111">Redefinição de senha</h2>
-          <p style="margin:0 0 24px;color:#555;line-height:1.6">
-            Recebemos uma solicitação para redefinir a senha da conta <strong>${email}</strong>.<br>
-            Clique no botão abaixo para criar uma nova senha.
-          </p>
-          <a href="${confirmUrl}" style="display:inline-block;background:#1a1a2e;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:700;font-size:15px">
-            Redefinir senha
-          </a>
-          <p style="margin:24px 0 0;color:#888;font-size:13px;line-height:1.5">
-            Se você não solicitou a redefinição de senha, ignore este e-mail — sua conta continua segura.<br>
-            O link expira em 1 hora.
-          </p>
-        </td></tr>
-        <tr><td style="padding:20px 40px;border-top:1px solid #eee;text-align:center">
-          <p style="margin:0;color:#aaa;font-size:12px">Monitor Diário &mdash; monitordiario.com.br</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Redefinir senha</title>
+</head>
+<body style="margin:0; padding:0; background:#f4f6f8; font-family: Arial, Helvetica, sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+<tr>
+<td align="center">
+<table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 4px 10px rgba(0,0,0,0.05);">
+<tr>
+<td align="center" style="padding:30px 20px;background:#ffffff;border-bottom:1px solid #eeeeee;">
+<img src="https://monitordiario.com.br/imagens/logo-monitor-diario.png" alt="Monitor Diário" style="max-width:180px;">
+</td>
+</tr>
+<tr>
+<td style="padding:40px 40px 30px 40px;color:#333333;font-size:16px;line-height:1.6;">
+<h2 style="margin-top:0;color:#222;font-size:22px;">
+Redefinir sua senha
+</h2>
+<p>Olá! 👋</p>
+<p>
+Recebemos uma solicitação para redefinir a senha da sua conta no
+<strong>Monitor Diário</strong>.
+</p>
+<p style="text-align:center;margin:35px 0;">
+<a href="${confirmUrl}"
+style="
+background:#00b871;
+color:#ffffff;
+padding:14px 28px;
+text-decoration:none;
+border-radius:6px;
+font-weight:bold;
+display:inline-block;
+font-size:16px;
+">
+Redefinir minha senha
+</a>
+</p>
+<p style="font-size:14px;color:#666;">
+Se o botão não funcionar, copie e cole o link abaixo no seu navegador:
+</p>
+<p style="font-size:14px;word-break:break-all;color:#00b871;">
+${confirmUrl}
+</p>
+<p style="margin-top:30px;">
+Caso você não solicitou a redefinição de senha, pode ignorar este email com segurança.
+</p>
+</td>
+</tr>
+<tr>
+<td style="background:#f7f7f7;padding:20px 30px;font-size:13px;color:#777;text-align:center;">
+<p style="margin:0 0 8px 0;">Monitor Diário</p>
+<p style="margin:0;">Ferramenta para monitoramento de Diários Oficiais</p>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
 </body>
 </html>`,
   };
@@ -183,9 +250,9 @@ Deno.serve(async (req) => {
 
   let email: { subject: string; html: string };
   if (email_data.email_action_type === "signup") {
-    email = signupTemplate(user.email, confirmUrl);
+    email = signupTemplate(confirmUrl);
   } else if (email_data.email_action_type === "recovery") {
-    email = recoveryTemplate(user.email, confirmUrl);
+    email = recoveryTemplate(confirmUrl);
   } else {
     // For other types (invite, magiclink, email_change) fall through with no-op
     return new Response(JSON.stringify({ message: "Email type not handled" }), { status: 200, headers: JSON_HEADERS });
