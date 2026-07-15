@@ -20,3 +20,7 @@ import_map = "./functions/deno.json"
 [functions.daily-digest]
 verify_jwt = false
 import_map = "./functions/deno.json"
+
+[functions.unsubscribe]
+verify_jwt = false
+import_map = "./functions/deno.json"
