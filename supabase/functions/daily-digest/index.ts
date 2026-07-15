@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { signUnsubscribeToken } from "../_shared/unsubscribe.ts";
 
 const MONITOR_SUPABASE_URL = Deno.env.get("MONITOR_SUPABASE_URL");
 const MONITOR_SUPABASE_KEY = Deno.env.get("MONITOR_SUPABASE_KEY");
@@ -50,6 +51,15 @@ function brazilDayRange(): { start: string; end: string; label: string } {
 }
 
 const PLATFORM_URL = "https://www.monitordiario.com.br/app";
+const UNSUBSCRIBE_FUNCTION_URL = `${MONITOR_SUPABASE_URL}/functions/v1/unsubscribe`;
+
+async function buildUnsubscribeUrl(email: string): Promise<string> {
+  const token = await signUnsubscribeToken(email);
+  const url = new URL(UNSUBSCRIBE_FUNCTION_URL);
+  url.searchParams.set("email", email);
+  url.searchParams.set("token", token);
+  return url.toString();
+}
 
 function escapeHtml(s: string): string {
   return s
@@ -97,7 +107,7 @@ Ver achado na plataforma →
 </table>`;
 }
 
-function digestTemplate(dateLabel: string, findings: Finding[]): { subject: string; html: string } {
+function digestTemplate(dateLabel: string, findings: Finding[], unsubscribeUrl: string): { subject: string; html: string } {
   const cards = findings.map((f) => findingCard(f, dateLabel)).join("\n");
 
   return {
@@ -168,8 +178,14 @@ Acessar Monitor Diário
 Monitor Diário
 </p>
 
-<p style="margin:0;">
+<p style="margin:0 0 8px 0;">
 Ferramenta para monitoramento de Diários Oficiais
+</p>
+
+<p style="margin:0;">
+<a href="${unsubscribeUrl}" style="color:#999;text-decoration:underline;">
+Cancelar assinatura
+</a>
 </p>
 
 </td>
@@ -220,8 +236,36 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "MONITOR_SUPABASE_URL/KEY not set" }), { status: 503, headers: JSON_HEADERS });
   }
 
-  const supabase = createClient(MONITOR_SUPABASE_URL, MONITOR_SUPABASE_KEY);
   const { start, end, label } = brazilDayRange();
+
+  // Preview mode: send the template with sample findings to a single address,
+  // bypassing the real query/grouping so it never touches real users' data.
+  const body = await req.json().catch(() => ({}));
+  if (typeof body?.testEmail === "string") {
+    const sampleFindings: Finding[] = [
+      {
+        title: "Licitações e Contratos",
+        uf: "BA",
+        resumo: "Foi publicado um edital de pregão eletrônico para aquisição de equipamentos hospitalares, no valor estimado de R$ 1,2 milhão.",
+      },
+      {
+        title: "Nomeações e Exonerações",
+        uf: "PI",
+        resumo: "Foram publicadas três nomeações para cargos de comissão na Secretaria de Educação do estado.",
+      },
+    ];
+    const unsubscribeUrl = await buildUnsubscribeUrl(body.testEmail);
+    const { subject, html } = digestTemplate(label, sampleFindings, unsubscribeUrl);
+    try {
+      await sendEmail(body.testEmail, subject, html);
+      return new Response(JSON.stringify({ message: `Test digest sent to ${body.testEmail}` }), { status: 200, headers: JSON_HEADERS });
+    } catch (e) {
+      console.error("[daily-digest] test send failed:", e);
+      return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: JSON_HEADERS });
+    }
+  }
+
+  const supabase = createClient(MONITOR_SUPABASE_URL, MONITOR_SUPABASE_KEY);
 
   const { data: monitors, error: monitorsError } = await supabase
     .from("monitores")
@@ -269,12 +313,30 @@ Deno.serve(async (req) => {
     });
   }
 
+  if (findingsByEmail.size > 0) {
+    const { data: unsubscribes, error: unsubscribesError } = await supabase
+      .from("email_unsubscribes")
+      .select("email")
+      .in("email", [...findingsByEmail.keys()].map((e) => e.toLowerCase()));
+
+    if (unsubscribesError) {
+      console.error("[daily-digest] failed to fetch email_unsubscribes:", JSON.stringify(unsubscribesError));
+      return new Response(JSON.stringify({ error: unsubscribesError.message }), { status: 500, headers: JSON_HEADERS });
+    }
+
+    const unsubscribedEmails = new Set((unsubscribes ?? []).map((u: { email: string }) => u.email.toLowerCase()));
+    for (const email of findingsByEmail.keys()) {
+      if (unsubscribedEmails.has(email.toLowerCase())) findingsByEmail.delete(email);
+    }
+  }
+
   let usersNotified = 0;
   let totalFindings = 0;
   const errors: string[] = [];
 
   for (const [email, findings] of findingsByEmail) {
-    const { subject, html } = digestTemplate(label, findings);
+    const unsubscribeUrl = await buildUnsubscribeUrl(email);
+    const { subject, html } = digestTemplate(label, findings, unsubscribeUrl);
     try {
       await sendEmail(email, subject, html);
       usersNotified++;
